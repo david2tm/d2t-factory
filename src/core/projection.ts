@@ -63,8 +63,9 @@ export interface Decision {
 export interface Deadlines { signal_lost_at: string | null; overdue_at: string | null; cut_at: string | null; ends_at: string | null; timebox_ends_at: string | null }
 
 // The Budget clock (3-1): absolute times only; the browser counts down against its own clock. A
-// terminal run's clock stops at its last command (stopped_at).
-export interface BudgetView { clock_start: string; limit_min: number; cut_at: string; ends_at: string; stopped_at: string | null }
+// terminal run's clock stops at its last command (stopped_at). Without a time limit (6-2) only
+// clock_start is set, and the board counts elapsed time up from it.
+export interface BudgetView { clock_start: string; limit_min: number | null; cut_at: string | null; ends_at: string | null; stopped_at: string | null }
 
 export interface Lane {
   run_id: string;
@@ -80,7 +81,7 @@ export interface Lane {
   parked: boolean;
   skipped: number;
   deadlines: Deadlines;
-  budget: BudgetView | null; // null until a confirmed intake
+  budget: BudgetView | null; // null until a confirmed intake (with a clock start)
   stage_track: { stage: Stage; status: TrackStatus }[];
   gates: { n: 1 | 2; status: 'hollow' | 'waiting' | 'passed' }[];
   cards: BoardCard[];
@@ -319,7 +320,8 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
       overdue_at: openClaims[0] ?? null, cut_at: b && !terminal ? b.cut_at : null, ends_at: b && !terminal ? b.ends_at : null,
       timebox_ends_at: timeboxEnds.sort()[0] ?? null,
     },
-    budget: b ? { clock_start: b.clock_start, limit_min: b.limit_min, cut_at: b.cut_at, ends_at: b.ends_at, stopped_at: terminal ? s.last_ts : null } : null,
+    budget: b ? { clock_start: b.clock_start, limit_min: b.limit_min, cut_at: b.cut_at, ends_at: b.ends_at, stopped_at: terminal ? s.last_ts : null }
+      : s.intake && s.clock_start ? { clock_start: s.clock_start, limit_min: null, cut_at: null, ends_at: null, stopped_at: terminal ? s.last_ts : null } : null,
     stage_track: track.map((stage) => ({ stage, status: status(stage) })),
     gates: [gate(1, phaseAt('SLICE_PLAN'), 'gate_1'), gate(2, phaseAt('BUILD'), 'gate_2')],
     cards,

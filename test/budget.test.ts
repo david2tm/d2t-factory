@@ -11,10 +11,11 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 const MIN = 60_000;
 
 // BUILD with these slices, an intake of `limit` minutes and the clock started at T0.
-function state(o: { limit?: number; phase?: RunState['phase']; slices?: Record<string, SliceState>; intake?: boolean } = {}): RunState {
+// `limit: null`: an intake with no time limit (6-2).
+function state(o: { limit?: number | null; phase?: RunState['phase']; slices?: Record<string, SliceState>; intake?: boolean } = {}): RunState {
   const s: RunState = { ...initialState(), run_id: 'r', phase: o.phase ?? 'BUILD' };
   if (o.intake !== false) {
-    s.intake = { limit_min: o.limit ?? 120, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] } };
+    s.intake = { ...(o.limit === null ? {} : { limit_min: o.limit ?? 120 }), slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] } };
     s.clock_start = iso(T0);
   }
   for (const [id, st] of Object.entries(o.slices ?? { S1: 'BUILDING', S2: 'BACKLOG', S3: 'BACKLOG' }) as [string, SliceState][]) {
@@ -24,7 +25,7 @@ function state(o: { limit?: number; phase?: RunState['phase']; slices?: Record<s
   return s;
 }
 
-test('clock start: an earlier exercise start wins; a later one, an absent one or one that does not parse leaves the run start', () => {
+test('clock start: an earlier start of the time limit wins; a later one, an absent one or one that does not parse leaves the run start', () => {
   const run = '2026-10-24T12:00:00.000Z';
   assert.equal(clockStart(run, '2026-10-24T10:00:00Z'), '2026-10-24T10:00:00.000Z');
   assert.equal(clockStart(run, '2026-10-24T13:00:00.000Z'), run);
@@ -39,6 +40,16 @@ test('budgetOf: null without a confirmed intake; else the cut point at limit −
   assert.equal(budgetOf(state({ limit: 90 }))!.cut_at, iso(T0 + 50 * MIN), '1:30 → 0:50');
   assert.equal(budgetOf(state({ limit: 30 }))!.cut_ms, T0 - 10 * MIN, 'a limit under the lead: the cut point is already behind');
   assert.equal(CUT_LEAD_MS, 40 * MIN);
+});
+
+test('no time limit (6-2): no budget, no cut candidates, no cut deadline, however late; the slice time box still sets deadlines', () => {
+  const s = state({ limit: null });
+  assert.equal(s.clock_start, iso(T0));
+  assert.equal(budgetOf(s), null);
+  assert.deepEqual(cutCandidates(s, T0 + 1000 * MIN), []);
+  assert.deepEqual(deadlinesAhead(s, T0), []);
+  assert.equal(nextDeadlineMs(s, T0), WAIT_MAX_MS);
+  assert.deepEqual(deadlinesAhead(s, T0, [], [iso(T0 + 5 * MIN)]), [5 * MIN], 'a time box end still counts');
 });
 
 test('cut candidates: every Backlog slice once BUILD passes the cut point; nothing before it, outside BUILD, after a decision, while one is open, or with no Backlog', () => {

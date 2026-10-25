@@ -34,11 +34,17 @@ export const CHECKS = [
 ] as const;
 export type Check = (typeof CHECKS)[number];
 
+// 6-2 (AD-34), additive: a legal command and one line on what happens after it is typed.
+export interface CardOption { command: string; then: string }
+
 export interface Card {
   type: string;
   title: string;
   reason_label?: string;
   reason?: string;
+  details?: string[]; // 6-2: lines shown between the reason and the options (the intake's task and scope)
+  options?: CardOption[]; // 6-2: commands = options.map(command) whenever options is present
+  reply?: string; // 6-2: what a chat reply does at this card
   commands: string[];
   escalation?: string; // E<n>, on the card of an escalation's ask_human step
   // 3-4: an escalation card's closed-list condition (review policy): 1 scope change / spec ambiguity,
@@ -61,10 +67,15 @@ export interface DesignQuestion { question: string; a: string; b: string; defaul
 // additive: the slicer's tags, and the roster core/roster.ts derives from them at plan.lint.
 export interface SlicePlanEntry { id: string; title?: string; deps?: string[]; acs?: string[]; notes?: string[]; tags?: string[]; roster?: string[] }
 
-// The intake front matter (AD-27) as validated, with slice_timebox_min defaulted. reviewer_overrides
-// apply run-wide; started is the exercise's start (ISO-8601 UTC) when it began before the run.
+// The intake front matter (AD-27) as validated, with slice_timebox_min defaulted. task and scope
+// (6-2) are what the human agreed; limit_min is the optional time limit; reviewer_overrides apply
+// run-wide; started (only with a limit) is when that time limit's clock started (ISO-8601 UTC), when
+// before the run. Intakes recorded before 6-2 carry no task or scope.
 export interface ReviewerOverrides { add: string[]; remove: string[] }
-export interface Intake { limit_min: number; slice_timebox_min: number; ui_free: boolean; reviewer_overrides: ReviewerOverrides; started?: string }
+export interface IntakeScope { in: string[]; out: string[] }
+export interface Intake {
+  task?: string; scope?: IntakeScope; limit_min?: number; slice_timebox_min: number; ui_free: boolean; reviewer_overrides: ReviewerOverrides; started?: string;
+}
 
 // An approved artifact pinned by content (AD-10).
 export interface Pin { path: string; sha256: string }

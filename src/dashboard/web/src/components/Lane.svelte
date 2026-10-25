@@ -52,7 +52,8 @@
       <span class="stage-now">STAGE <b class:g={word.gold}>{word.text}</b></span>
       {#if paused}<span class="paused">{paused}</span>{/if}
     </div>
-    <!-- The Budget clock, once intake is confirmed; the slot keeps its width before that. -->
+    <!-- The Budget clock once intake is confirmed with a time limit, or the elapsed clock
+         (`ELAPSED h:mm · no limit`) without one; the slot keeps its width before that. -->
     <div class="budget"><BudgetClock budget={lane.budget} {now} /></div>
     <ol class="track" aria-label="Stage track">
       {#each track as t, i (t.label)}

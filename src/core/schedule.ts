@@ -51,15 +51,15 @@ const lintView = (st: Step): { ok: boolean; errors: string[] } => ({
 });
 
 // INTAKE (3-1): the conversation step (the CLI adds its output_path and brief), then, once the
-// conductor reported a valid intake, the confirm card showing its fields. A re-report closes the
-// stale card (done.ts), so a fresh one is due.
+// conductor reported a valid intake, the confirm card showing its task, scope and settings. A
+// re-report closes the stale card (done.ts), so a fresh one is due.
 function intake(s: RunState): DueStep[] {
   const open = openSteps(s);
   const chat = open.find(isIntakeChat);
   if (!chat) return [{ kind: 'ask_human', stage: 'INTAKE', attempt: 1, card: intakeCard() }];
   if (chat.state !== 'reported' || open.some(isIntakeConfirm)) return [];
   const v = validateIntake((chat.output?.front ?? {}) as Record<string, unknown>);
-  return v.ok ? [{ kind: 'ask_human', stage: 'INTAKE', attempt: 1, card: intakeConfirmCard(v.value) }] : [];
+  return v.ok ? [{ kind: 'ask_human', stage: 'INTAKE', attempt: 1, card: intakeConfirmCard(v.value, { greenfield: Boolean(s.greenfield) }) }] : [];
 }
 
 // ORIENT: RECON (brownfield) is one recon agent unless the cache hit; FRAME (greenfield, 5-2) is one
@@ -140,7 +140,7 @@ function slicePlan(s: RunState): DueStep[] {
   if (lint.state !== 'verified') return [];
   if (latestStep(s, (st) => st.kind === 'ask_human' && st.card?.type === 'gate_2' && st.issued_seq > lint.issued_seq && !isVoided(s, st.id))) return [];
   const slices = Array.isArray(lint.output?.plan) ? (lint.output!.plan as SlicePlanEntry[]) : [];
-  return [{ kind: 'ask_human', stage: 'SLICE_PLAN', attempt: 1, card: gate2Card({ slices, lint: lintView(lint) }) }];
+  return [{ kind: 'ask_human', stage: 'SLICE_PLAN', attempt: 1, card: gate2Card({ slices, lint: lintView(lint), cut: typeof s.intake?.limit_min === 'number' }) }];
 }
 
 // BUILD (AD-30, 3-4): the live slices in plan order, each round builder → (CLI commit) →

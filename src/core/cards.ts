@@ -1,33 +1,68 @@
 // Cards (AD-34): derived here only, embedded in `next` steps and `ask_raised`. Pure: no I/O.
-// `commands` lists only the decisions that are legal for the card.
-import type { Card, DesignQuestion, Intake, SlicePlanEntry } from './events.ts';
+// `commands` lists only the decisions that are legal for the card. 6-2: each command comes as an
+// option with its `then` (what happens after it is typed), and `commands` is derived from the
+// options; `reply` says, truthfully, what a chat reply does at the card (AD-6: only at the intake
+// does it change anything).
+import type { Card, CardOption, DesignQuestion, Intake, SlicePlanEntry } from './events.ts';
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 // Minutes as `h:mm` (120 → 2:00).
 export const hm = (min: number): string => `${Math.floor(min / 60)}:${pad2(min % 60)}`;
 
-// The INTAKE conversation (3-1): the conductor agrees the four fields with the human in chat and
-// writes the intake out.md. No decision answers it, so it has no commands.
+// The options and the commands derived from them, so the two can never disagree.
+const withOptions = (options: CardOption[]): { options: CardOption[]; commands: string[] } => ({ options, commands: options.map((o) => o.command) });
+const opt = (command: string, then: string): CardOption => ({ command, then });
+
+// The reply lines (a chat reply changes nothing outside the intake: decisions are typed only).
+const ESCALATION_REPLY = 'Ask in chat; to decide, type one of the commands.';
+const gateReply = (what: string): string => `Ask questions in chat; to change ${what}, use rework.`;
+const ABANDON = opt('/factory abandon', 'the run ends; nothing is merged');
+
+// A card in the AD-34 order, one string per line: the title, the reason, the details, `To continue,
+// type one of:`, one `command — then` per option, the reply. The conductor prints these lines
+// verbatim (next's card_text) and the Needs You card renders the same order. A card recorded before
+// 6-2 has only `commands`: it keeps the old chat shape (title, reason, then each command on its own
+// line, with no header and no reply).
+export function cardLines(card: Card): string[] {
+  const head = [card.title, ...(card.reason ? [card.reason] : []), ...(card.details ?? [])];
+  if (!card.options) return [...head, ...(card.commands ?? [])];
+  return [
+    ...head,
+    ...(card.options.length ? ['To continue, type one of:', ...card.options.map((o) => `  ${o.command} — ${o.then}`)] : []),
+    ...(card.reply ? [card.reply] : []),
+  ];
+}
+
+// The INTAKE conversation (3-1): the conductor agrees the task, its scope and the settings with
+// the human in chat and writes the intake out.md. No decision answers it, so it has no commands.
 export function intakeCard(): Card {
   return {
     type: 'intake',
     title: 'Intake — agree the task with the human',
-    reason: 'Ask for the time limit, the slice time box, whether the task is UI-free and any reviewer overrides; then write the intake and run factory done.',
-    commands: [],
+    reason: 'Ask for the task and its scope, whether there is a time limit (optional), the slice time box, whether the task is UI-free and any reviewer overrides; then write the intake and run factory done.',
+    ...withOptions([]),
+    reply: "Answer in chat; you'll then get a card to confirm the intake.",
   };
 }
 
-// The intake as recorded, for the human to confirm before RECON (AD-34): the four fields.
-export function intakeConfirmCard(i: Intake): Card {
+const list = (xs: readonly string[] | undefined): string => (xs?.length ? xs.join('; ') : '—');
+
+// The intake as recorded, for the human to confirm before RECON (AD-34): the settings as the
+// reason, the task and scope as details. Greenfield orients with FRAME instead of RECON.
+export function intakeConfirmCard(i: Intake, o: { greenfield?: boolean } = {}): Card {
   const { add, remove } = i.reviewer_overrides;
   const reviewers = add.length || remove.length ? [...add.map((r) => `+${r}`), ...remove.map((r) => `-${r}`)].join(' ') : 'default';
-  const fields = [`limit ${hm(i.limit_min)}`, `slice time box ${i.slice_timebox_min} min`, `UI-free ${i.ui_free ? 'yes' : 'no'}`, `reviewers: ${reviewers}`];
+  const limit = typeof i.limit_min === 'number' ? `time limit ${hm(i.limit_min)}` : 'no time limit';
+  const fields = [limit, `slice time box ${i.slice_timebox_min} min`, `UI-free ${i.ui_free ? 'yes' : 'no'}`, `reviewers: ${reviewers}`];
+  const orient = o.greenfield ? 'FRAME picks the stack' : 'RECON maps the repo';
   return {
     type: 'intake',
     title: 'Intake — confirm the task',
     reason: [...fields, ...(i.started ? [`started ${i.started}`] : [])].join(' · '),
-    commands: ['/factory approve intake'],
+    details: [`Task: ${i.task || '—'}`, `In scope: ${list(i.scope?.in)}`, `Out of scope: ${list(i.scope?.out)}`],
+    ...withOptions([opt('/factory approve intake', `${orient}, then SCAFFOLD; the next stop is Gate 1`)]),
+    reply: "Reply in chat to change any of this; you'll get this card again.",
   };
 }
 
@@ -39,7 +74,11 @@ export function cutCard(slices: readonly Pick<SlicePlanEntry, 'id' | 'title'>[])
     type: 'cut',
     title: `Cut point reached — ${plural(ids.length, 'slice')} unbuilt. Cut ${ids.join(', ')}?`,
     reason: slices.map((s) => `${s.id}${s.title ? ` ${s.title}` : ''}`).join(' · '),
-    commands: [`/factory cut ${ids.join(',')}`, '/factory keep'],
+    ...withOptions([
+      opt(`/factory cut ${ids.join(',')}`, `${ids.join(', ')} ${ids.length === 1 ? 'is' : 'are'} not built; BUILD goes on with the rest`),
+      opt('/factory keep', 'every slice is built; no cut is proposed again'),
+    ]),
+    reply: ESCALATION_REPLY,
   };
 }
 
@@ -58,19 +97,26 @@ export function gate1Card(o: { spec_path: string; assumptions: number; lint: Lin
     title: d ? 'Gate 1 — Spec + Design ready' : 'Gate 1 — approve the spec',
     reason_label: d ? 'Spec + Design' : 'Spec',
     reason: `${o.spec_path} · ${d ? `${d.path} (${d.mode}) · ` : ''}${plural(o.assumptions + (d?.assumptions ?? 0), 'assumption')} to check${lintNote(o.lint, 'spec.lint')}`,
-    commands: [...(o.lint.ok ? ['/factory approve gate1'] : []), '/factory rework gate1 <note…>'],
+    ...withOptions([
+      ...(o.lint.ok ? [opt('/factory approve gate1', 'SLICE PLAN splits the spec into slices; the next stop is Gate 2')] : []),
+      opt('/factory rework gate1 <note…>', `${d ? 'SPEC and DESIGN are' : 'SPEC is'} redone with your note; Gate 1 comes back`),
+    ]),
+    reply: gateReply(d ? 'the spec or design' : 'the spec'),
   };
 }
 
 // The designer's one question (invent mode, a declared ask): two options; the design is already
-// written for the default, so choosing it costs nothing.
+// written for the default, so choosing it costs nothing. The other voids it, and a fresh designer
+// writes design.md for that option.
 export function designChoiceCard(q: DesignQuestion): Card {
+  const then = (c: 'a' | 'b'): string => (c === q.default ? 'design.md stays as written; then Gate 1' : `a fresh designer writes design.md for ${c}; then Gate 1`);
   return {
     type: 'design_choice',
     title: `Design question — ${q.question}`,
     reason_label: 'Design',
     reason: `a: ${q.a} · b: ${q.b} · default ${q.default} (the design is written for it)`,
-    commands: ['/factory choose a', '/factory choose b'],
+    ...withOptions([opt('/factory choose a', then('a')), opt('/factory choose b', then('b'))]),
+    reply: ESCALATION_REPLY,
   };
 }
 
@@ -79,7 +125,8 @@ const short = (role: string): string => role.replace(/^reviewer-/, '');
 
 // One row per slice (3-3): `S1 Signup form (AC-1, AC-2) [ui, input] · code, security, ux, a11y, ui`,
 // with `← S1` for its dependencies. A plan.lint failure lists its errors and offers rework only.
-export function gate2Card(o: { slices: readonly SlicePlanEntry[]; lint: LintView }): Card {
+// `cut`: the run has a time limit, so the cut point may come before the merge.
+export function gate2Card(o: { slices: readonly SlicePlanEntry[]; lint: LintView; cut: boolean }): Card {
   const rows = o.slices.map((s) => [
     `${s.id} ${s.title ?? ''} (${(s.acs ?? []).join(', ')})`,
     s.tags?.length ? ` [${s.tags.join(', ')}]` : '',
@@ -92,7 +139,11 @@ export function gate2Card(o: { slices: readonly SlicePlanEntry[]; lint: LintView
     title: 'Gate 2 — approve the slice plan',
     reason_label: 'Plan',
     reason: `${plural(o.slices.length, 'slice')}: ${rows.join('; ')}${lintNote(o.lint, 'plan.lint')}`,
-    commands: [...(o.lint.ok ? ['/factory approve gate2'] : []), '/factory rework gate2 <note…>'],
+    ...withOptions([
+      ...(o.lint.ok ? [opt('/factory approve gate2', `BUILD starts with the first slice; the next stop is the merge, unless an escalation${o.cut ? ' or the cut point' : ''} comes first`)] : []),
+      opt('/factory rework gate2 <note…>', 'the plan is redone with your note; Gate 2 comes back'),
+    ]),
+    reply: gateReply('the plan'),
   };
 }
 
@@ -104,7 +155,12 @@ export function scaffoldFailureCard(o: { escalation: string; failures: readonly 
     title: 'SCAFFOLD failed — the project does not run as the run contract says',
     reason_label: 'Scaffold failed',
     reason: o.failures.join('; '),
-    commands: [`/factory rule ${o.escalation} retry <note…>`, ...(o.accept ? [`/factory rule ${o.escalation} accept`] : []), '/factory abandon'],
+    ...withOptions([
+      opt(`/factory rule ${o.escalation} retry <note…>`, 'the scaffolder runs again with your note, then the checks'),
+      ...(o.accept ? [opt(`/factory rule ${o.escalation} accept`, 'SCAFFOLD is accepted as is and SPEC starts')] : []),
+      ABANDON,
+    ]),
+    reply: ESCALATION_REPLY,
     escalation: o.escalation,
   };
 }
@@ -123,7 +179,8 @@ export function escalationCard(o: { escalation: string; label: string; line: str
     title: `${o.label}${o.role ? ` (${o.role})` : ''}`,
     reason_label: o.label,
     reason: o.line,
-    commands: [`/factory rule ${o.escalation} retry <note…>`, '/factory abandon'],
+    ...withOptions([opt(`/factory rule ${o.escalation} retry <note…>`, `${o.role ?? 'the agent'} gets your note and tries again`), ABANDON]),
+    reply: ESCALATION_REPLY,
     escalation: o.escalation,
     ...conditionOf(o.label),
   };
@@ -138,7 +195,8 @@ export function stepNonConvergenceCard(o: { escalation: string; role: string; sl
     title: `Non-convergence (${who})`,
     reason_label: 'Non-convergence',
     reason: `${who} failed ${plural(o.attempt, 'attempt')}: ${o.error}`,
-    commands: [`/factory rule ${o.escalation} retry <note…>`, '/factory abandon'],
+    ...withOptions([opt(`/factory rule ${o.escalation} retry <note…>`, `${who} gets one more attempt, with your note`), ABANDON]),
+    reply: ESCALATION_REPLY,
     escalation: o.escalation,
     condition: 3,
   };
@@ -152,7 +210,12 @@ export function overTimeboxCard(o: { escalation: string; slice: string; elapsed_
     title: `Over time box (${o.slice})`,
     reason_label: 'Over time box',
     reason: `${o.slice} at ${o.elapsed_min} / ${o.limit_min} min.`,
-    commands: [`/factory rule ${o.escalation} retry <note…>`, `/factory rule ${o.escalation} cut`, '/factory abandon'],
+    ...withOptions([
+      opt(`/factory rule ${o.escalation} retry <note…>`, `${o.slice} gets another full time box; your note goes to its builder`),
+      opt(`/factory rule ${o.escalation} cut`, `${o.slice} is cut; its commits are kept and BUILD goes on with the rest`),
+      ABANDON,
+    ]),
+    reply: ESCALATION_REPLY,
     escalation: o.escalation,
     condition: 3,
   };
@@ -178,7 +241,12 @@ export function nonConvergenceCard(o: { escalation: string; slice: string; round
     title: `Non-convergence (${o.slice})`,
     reason_label: 'Non-convergence',
     reason: `${o.slice} is not done after ${plural(o.rounds, 'builder round')}: ${o.why}${o.deps?.length ? ` · accept also accepts new dependencies: ${o.deps.join(', ')}` : ''}`,
-    commands: [`/factory rule ${o.escalation} retry <note…>`, `/factory rule ${o.escalation} accept`, '/factory abandon'],
+    ...withOptions([
+      opt(`/factory rule ${o.escalation} retry <note…>`, `${o.slice} gets one more builder round, with your note`),
+      opt(`/factory rule ${o.escalation} accept`, `${o.slice} closes as it is${o.deps?.length ? ', with its new dependencies' : ''}`),
+      ABANDON,
+    ]),
+    reply: ESCALATION_REPLY,
     escalation: o.escalation,
     condition: 3,
   };
@@ -192,7 +260,12 @@ export function newDependencyCard(o: { escalation: string; slice: string; files:
     title: `New dependency (${o.slice})`,
     reason_label: 'New dependency',
     reason: o.files.join(', '),
-    commands: [`/factory rule ${o.escalation} accept`, `/factory rule ${o.escalation} retry <note…>`, '/factory abandon'],
+    ...withOptions([
+      opt(`/factory rule ${o.escalation} accept`, `the new dependency stays and ${o.slice} may close`),
+      opt(`/factory rule ${o.escalation} retry <note…>`, `${o.slice} goes back to its builder with your note`),
+      ABANDON,
+    ]),
+    reply: ESCALATION_REPLY,
     escalation: o.escalation,
     condition: 2,
     sha: o.sha,
@@ -207,7 +280,8 @@ export function signalLostCard(runId: string): Card {
     title: `SIGNAL LOST — ${runId}`,
     reason_label: 'Signal lost',
     reason: 'No command or fact for several heartbeats, and no live Claude Code session holds the run.',
-    commands: [`/factory resume ${runId}`],
+    // Board-only: options, but no reply line (it is never printed in chat).
+    ...withOptions([opt(`/factory resume ${runId}`, 'the session you type it in takes over the run, which goes on where it stopped')]),
   };
 }
 
@@ -224,7 +298,8 @@ export interface MergeView {
 }
 
 // The planned merge gate (AD-34). `/factory merge` only when every WRAP check passed at `sha` and
-// nothing is in the way; rework and abandon always.
+// nothing is in the way; rework and abandon always. A reworked slice goes back to its builder and
+// reviewers, and the card comes back.
 export function mergeCard(o: MergeView): Card {
   const rows = o.slices.map((s) => `${s.id} ${s.title ?? ''} · ${s.verdicts.map((v) => `${v.role} ${v.verdict ?? '—'}`).join(', ')} · ${plural(s.rounds, 'round')}`);
   const test = o.test ? `contract.test ${o.test.exit_code === 0 ? 'passed' : `failed (exit ${o.test.exit_code})`}` : 'contract.test not run';
@@ -234,7 +309,12 @@ export function mergeCard(o: MergeView): Card {
     title: o.problems.length ? 'Merge — blocked' : 'Merge — approve the local merge',
     reason_label: o.problems.length ? 'Blocked' : 'Merge',
     reason: parts.join(' · '),
-    commands: [...(o.problems.length ? [] : ['/factory merge']), ...o.slices.map((s) => `/factory rework ${s.id} <note…>`), '/factory abandon'],
+    ...withOptions([
+      ...(o.problems.length ? [] : [opt('/factory merge', `the CLI merges the run branch into ${o.branch ?? 'the current branch'} locally and the run ends`)]),
+      ...o.slices.map((s) => opt(`/factory rework ${s.id} <note…>`, `${s.id} goes back to its builder and reviewers; this card comes back`)),
+      ABANDON,
+    ]),
+    reply: gateReply('a slice'),
     sha: o.sha,
     target: o.target,
   };

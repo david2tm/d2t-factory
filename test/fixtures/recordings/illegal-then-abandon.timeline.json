@@ -4,7 +4,7 @@
 "start": "2026-10-24T09:00:01.000Z",
 "end": "2026-10-24T09:00:12.000Z",
 "signal_lost_ms": 180000,
-"runs": [{"repo_hash":"abc123def456","run_id":"add-login-page-q7k2","signal_lost_card":{"type":"signal_lost","title":"SIGNAL LOST — add-login-page-q7k2","reason_label":"Signal lost","reason":"No command or fact for several heartbeats, and no live Claude Code session holds the run.","commands":["/factory resume add-login-page-q7k2"]}}],
+"runs": [{"repo_hash":"abc123def456","run_id":"add-login-page-q7k2","signal_lost_card":{"type":"signal_lost","title":"SIGNAL LOST — add-login-page-q7k2","reason_label":"Signal lost","reason":"No command or fact for several heartbeats, and no live Claude Code session holds the run.","options":[{"command":"/factory resume add-login-page-q7k2","then":"the session you type it in takes over the run, which goes on where it stopped"}],"commands":["/factory resume add-login-page-q7k2"]}}],
 "events": [
 {"id":"01JQ0000000000000000000000","kind":"run_started","at":"2026-10-24T09:00:01.000Z","run":0,"decision":false,"frame":0},
 {"id":"01JQ0000000000000000000001","kind":"session_bound","at":"2026-10-24T09:00:02.000Z","run":0,"decision":false,"frame":1},

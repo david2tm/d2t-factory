@@ -25,3 +25,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-deferred-small-fixes-and-tests.md`
   summary: Kill a check command's whole process group on timeout, so backgrounded grandchildren don't outlive `factory check`.
   evidence: Reproduced: after `spawnSync('sh', ['-c', 'sleep 7.77 & echo $!'], { timeout: 500 })` returned, `process.kill(pid, 0)` on the printed pid succeeded, so the sleep was still alive. spawnSync signals only `sh`. The original "hangs" concern did not reproduce: spawnSync returns at the timeout even while a grandchild holds stdout.
+
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/6-2-cards-say-whats-next-intake-scope-optional-time-limit.md`
+  summary: The agreed intake task and scope (and out-of-scope items) never reach the spec-writer, slicer or builders; briefs use the raw `factory start` task.
+  evidence: `briefText` writes `task: ${state.task}` (src/cli/brief.ts) and no brief includes the intake out.md, so out-of-scope items the human settled at INTAKE are not passed to SPEC or SLICE PLAN. Pre-existing (the intake body never reached agents either); 6-2 only shows them on the confirm card.

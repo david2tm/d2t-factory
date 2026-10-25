@@ -51,3 +51,23 @@ test('redact is deep over arrays and plain objects and keeps keys and non-string
   assert.equal(v.prompt, '/factory add AKIAIOSFODNN7EXAMPLE', 'the input is not mutated');
   assert.deepEqual(redact(r), r);
 });
+
+test('redactCard (6-2): details, each option\'s then and the reply are redacted; commands and option commands stay exact; no options key is added', async () => {
+  const { redactCard } = await import('../src/cli/steps.ts');
+  const secret = 'hunter2-value-xyz';
+  const card = {
+    type: 'escalation', title: `t ${secret}`, reason: `r ${secret}`, details: [`Task: ${secret}`, 'plain'],
+    options: [{ command: '/factory rule E1 retry <note…>', then: `retry ${secret}` }, { command: '/factory abandon', then: 'the run ends' }],
+    reply: `reply ${secret}`, commands: ['/factory rule E1 retry <note…>', '/factory abandon'], escalation: 'E1',
+  };
+  const r = redactCard(card, [secret]);
+  assert.deepEqual([r.title, r.reason, r.details, r.options![0].then, r.options![1].then, r.reply], [
+    `t ${REDACTED}`, `r ${REDACTED}`, [`Task: ${REDACTED}`, 'plain'], `retry ${REDACTED}`, 'the run ends', `reply ${REDACTED}`,
+  ]);
+  assert.deepEqual(r.commands, card.commands);
+  assert.deepEqual(r.options!.map((o) => o.command), card.options.map((o) => o.command));
+  assert.equal(r.escalation, 'E1');
+  const old = redactCard({ type: 'gate_1', title: `t ${secret}`, commands: ['/factory approve gate1'] }, [secret]);
+  assert.equal('options' in old, false);
+  assert.deepEqual([old.title, old.commands], [`t ${REDACTED}`, ['/factory approve gate1']]);
+});

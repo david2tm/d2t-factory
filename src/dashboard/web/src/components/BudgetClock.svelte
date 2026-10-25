@@ -1,13 +1,15 @@
 <script lang="ts">
   // The Budget clock (DESIGN Swimlane header): `BUDGET 1:12 left of 2:00`, a draining holo meter with
   // the gold cut marker, and `▲ cut point at 0:40 left`. Past 0:00 the value reads `+m:ss over` in
-  // amber and the meter is empty.
-  import { budgetClock } from '../lib/model.ts';
+  // amber and the meter is empty. Without a time limit (6-2), the same slot shows `ELAPSED 0:47 · no
+  // limit`, counting up: no meter, no cut marker, no caption.
+  import { budgetClock, elapsedClock } from '../lib/model.ts';
   import type { BudgetView } from '../lib/types.ts';
   import Glyph from './Glyph.svelte';
 
   let { budget, now }: { budget: BudgetView | null; now: number } = $props();
   const v = $derived(budgetClock(budget, now));
+  const e = $derived(elapsedClock(budget, now));
 </script>
 
 {#if v}
@@ -23,6 +25,14 @@
     </div>
     <div class="cap" aria-hidden="true"><b>▲ cut point</b> at {v.cutLeft} left</div>
   </div>
+{:else if e}
+  <div class="clock" role="group" aria-label="Elapsed: {e.value}; no time limit">
+    <div class="top" aria-hidden="true">
+      <Glyph name="clock" />
+      <span class="lbl">ELAPSED</span>
+      <b>{e.value}</b><span class="nolimit">· no limit</span>
+    </div>
+  </div>
 {/if}
 
 <style>
@@ -32,6 +42,7 @@
   .lbl { font: 700 11px/1 var(--mono); letter-spacing: .12em; color: var(--text-3); margin-right: 2px; }
   .top b { font: 700 15px/1 var(--mono); color: var(--text); }
   .top .over { color: var(--amber); }
+  .nolimit { color: var(--text-3); }
   .bar { position: relative; height: 8px; margin-top: 7px; border-radius: var(--r-xs); background: var(--space-1); border: 1px solid var(--line-strong); }
   .fill {
     position: absolute; left: 0; top: 0; bottom: 0; border-radius: 1px;

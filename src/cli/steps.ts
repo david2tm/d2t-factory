@@ -63,11 +63,19 @@ export function evidenceFor(run: LoadedRun, st: Step, out: ReadOutput): AgentEvi
 
 export const nextEscalation = (state: RunState): string => `E${Object.values(state.asks).filter((a) => a.escalation).length + 1}`;
 
-// A card as embedded in an event (AD-14): its prose is redacted; its commands, escalation id and the
-// shas it is pinned to are structure, and must stay exact for the human to type and the CLI to compare.
+// A card as embedded in an event (AD-14): its prose (title, reason, details, each option's then, the
+// reply) is redacted; its commands, escalation id and the shas it is pinned to are structure, and
+// must stay exact for the human to type and the CLI to compare.
 export function redactCard(card: Card, values: readonly string[]): Card {
-  const prose = redact({ title: card.title, ...(card.reason_label !== undefined ? { reason_label: card.reason_label } : {}), ...(card.reason !== undefined ? { reason: card.reason } : {}) }, values);
-  return { ...card, ...prose };
+  const prose = redact({
+    title: card.title,
+    ...(card.reason_label !== undefined ? { reason_label: card.reason_label } : {}),
+    ...(card.reason !== undefined ? { reason: card.reason } : {}),
+    ...(card.details !== undefined ? { details: card.details } : {}),
+    ...(card.reply !== undefined ? { reply: card.reply } : {}),
+  }, values);
+  const options = card.options?.map((o) => ({ command: o.command, then: redact(o.then, values) }));
+  return { ...card, ...prose, ...(options ? { options } : {}) };
 }
 
 // An escalation about `st` (or, with no step, about the slice: an Over time box). With a slice, the

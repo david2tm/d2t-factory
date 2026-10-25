@@ -129,7 +129,7 @@
       {:else if !replay && $loaded && $lanes.length === 0}
         <div class="no-runs">
           <EmptyCell title="NO RUNS YET" body="Start one in the terminal:">
-            <ActionSlot commands={['/factory [task]']} />
+            <ActionSlot card={{ commands: ['/factory [task]'] }} />
           </EmptyCell>
         </div>
       {/if}

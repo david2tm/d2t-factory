@@ -252,6 +252,22 @@ test('budget: null (and no cut or end deadline) without an intake; with one, the
   assert.deepEqual([ended.deadlines.cut_at, ended.deadlines.ends_at], [null, null]);
 });
 
+test('no time limit (6-2): the budget carries only clock_start, with no cut or end deadline, past any cut point; a terminal clock stops', () => {
+  const clock = '2026-10-24T08:00:00.000Z';
+  const intake = { task: 't', scope: { in: [], out: [] }, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] } };
+  const events: AnyEvent[] = [
+    ev('run_started', { task: 't', repo_hash: 'h', base_sha: 'b', branch: 'f' }),
+    human('intake_confirmed', { intake, clock_start: clock }),
+    ev('stage_completed', { stage: 'RECON' }),
+  ];
+  const l = lane(events);
+  assert.deepEqual(l.budget, { clock_start: clock, limit_min: null, cut_at: null, ends_at: null, stopped_at: null });
+  assert.deepEqual(Object.keys(l.budget!), ['clock_start', 'limit_min', 'cut_at', 'ends_at', 'stopped_at'], 'the same keys, in the same order, as with a limit');
+  assert.deepEqual([l.deadlines.cut_at, l.deadlines.ends_at], [null, null]);
+  const ended = lane([...events, human('run_abandoned', {}, '2026-10-24T11:00:00.000Z')]);
+  assert.deepEqual(ended.budget, { clock_start: clock, limit_min: null, cut_at: null, ends_at: null, stopped_at: '2026-10-24T11:00:00.000Z' });
+});
+
 test('time box (3-4): a live slice card carries timebox_ends_at and timebox_min, the lane its earliest end; an escalation pauses it (none shown), a closed or Backlog slice has none; no intake, no time box', () => {
   const intake = { limit_min: 120, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] } };
   const sc = ev('step_issued', { kind: 'spawn', stage: 'SCAFFOLD', attempt: 1, role: 'scaffolder' });

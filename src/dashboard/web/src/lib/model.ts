@@ -1,7 +1,7 @@
 // Pure, DOM-free view logic for the board (2-2). Everything here derives from the 2-1 Lane shape;
 // the only clock is the `now` passed in, compared against the projection's absolute deadlines. The
 // browser holds no thresholds.
-import type { BoardCard, BudgetView, Card, Claim, Column, Decision, Lane, NeedsYou, Stage, TrackStatus } from './types.ts';
+import type { BoardCard, BudgetView, Card, CardOption, Claim, Column, Decision, Lane, NeedsYou, Stage, TrackStatus } from './types.ts';
 
 export const COLUMNS: readonly Column[] = ['backlog', 'in_progress', 'in_review', 'needs_you', 'done'];
 export const COLUMN_TITLE: Record<Column, string> = { backlog: 'Backlog', in_progress: 'In Progress', in_review: 'In Review', needs_you: 'Needs You', done: 'Done' };
@@ -314,7 +314,7 @@ export interface ClockView {
 // DESIGN Budget clock: counts down from the limit and never pauses; a terminal run's clock stops at
 // its last command, and a browser clock behind clock_start shows the full limit. The cut marker sits where the time left equals the cut lead (ends_at − cut_at).
 export function budgetClock(b: BudgetView | null, now: number): ClockView | null {
-  if (!b) return null;
+  if (!b || b.limit_min === null || b.ends_at === null || b.cut_at === null) return null;
   const start = Date.parse(b.clock_start);
   const ends = Date.parse(b.ends_at);
   const cutAt = Date.parse(b.cut_at);
@@ -335,4 +335,24 @@ export function budgetClock(b: BudgetView | null, now: number): ClockView | null
     cut: clamp(lead / total),
     cutLeft: hmm(Math.round(lead / 60_000)),
   };
+}
+
+// The no-limit variant (6-2): `ELAPSED 0:47 · no limit`, whole minutes as `h:mm`, counting up from
+// clock_start and stopping at stopped_at. Null with a time limit (the Budget clock shows instead).
+export function elapsedClock(b: BudgetView | null, now: number): { value: string } | null {
+  if (!b || b.limit_min !== null) return null;
+  const start = Date.parse(b.clock_start);
+  if (!Number.isFinite(start)) return null;
+  const stop = b.stopped_at ? Date.parse(b.stopped_at) : NaN;
+  const at = Number.isFinite(stop) ? Math.min(now, stop) : now;
+  return { value: hmm(Math.floor(Math.max(0, at - start) / 60_000)) };
+}
+
+// --- Action slot (6-2) ---------------------------------------------------------------------------
+
+// The Action slot's rows: each option (command and its then line) and the card's reply. A card
+// recorded before 6-2 has only commands: those rows have no then, and there is no reply.
+export function actionRows(card: Pick<Card, 'commands' | 'options' | 'reply'>): { rows: CardOption[]; reply?: string } {
+  if (!card.options) return { rows: card.commands.map((command) => ({ command, then: '' })) };
+  return { rows: card.options, ...(card.reply ? { reply: card.reply } : {}) };
 }

@@ -197,7 +197,7 @@ export const questionBlock = (q = 'Light or dark footer?', a = 'Light', b = 'Dar
 
 // The conductor's intake out.md; `undefined` drops a field.
 export function intakeOut(o: Record<string, unknown> = {}): string {
-  const front = Object.fromEntries(Object.entries({ limit_min: 120, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] }, ...o }).filter(([, v]) => v !== undefined));
+  const front = Object.fromEntries(Object.entries({ task: 'add a footer', scope: { in: ['the footer'], out: [] }, limit_min: 120, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] }, ...o }).filter(([, v]) => v !== undefined));
   return `STATUS: DONE\n---\n${fm(front)}\n---\nThe task as agreed.\n`;
 }
 export const isIntakeChat = (st: any): boolean => st.kind === 'ask_human' && st.card?.type === 'intake' && !st.card.commands.length;

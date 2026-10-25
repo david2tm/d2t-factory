@@ -7,8 +7,9 @@ import type { AnyEvent } from '../src/core/events.ts';
 import { projectRun, type Lane as CoreLane } from '../src/core/projection.ts';
 import { fold } from '../src/core/reducer.ts';
 import { readLines } from '../src/store/jsonl.ts';
+import { gate1Card, signalLostCard } from '../src/core/cards.ts';
 import {
-  activeCardId, ago, budgetClock, cells, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
+  actionRows, activeCardId, ago, budgetClock, cells, elapsedClock, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
 } from '../src/dashboard/web/src/lib/model.ts';
 import type { Lane } from '../src/dashboard/web/src/lib/types.ts';
 
@@ -199,6 +200,21 @@ test('budget clock: `1:12 left of 2:00` with the meter draining and the cut mark
   assert.deepEqual(budgetClock(b, t('2026-10-24T11:50:00.000Z'))!, { value: '2:00', limit: '2:00', over: false, fill: 1, cut: 1 / 3, cutLeft: '0:40' });
   // A limit under the cut lead: the cut point is at the clock start, so the marker sits at the meter's full end.
   assert.equal(budgetClock({ ...b, limit_min: 30, cut_at: '2026-10-24T11:50:00.000Z', ends_at: '2026-10-24T12:30:00.000Z' }, t('2026-10-24T12:00:00.000Z'))!.cut, 1);
+  assert.equal(elapsedClock(b, t('2026-10-24T12:48:00.000Z')), null, 'with a limit: the Budget clock, not the elapsed one');
+});
+
+test('elapsedClock (6-2): no time limit: whole minutes as h:mm, counting up from clock_start, stopping at stopped_at; no Budget clock', () => {
+  const b = { clock_start: '2026-10-24T12:00:00.000Z', limit_min: null, cut_at: null, ends_at: null, stopped_at: null };
+  const t = (iso: string): number => Date.parse(iso);
+  assert.equal(budgetClock(b, t('2026-10-24T12:47:00.000Z')), null);
+  assert.equal(elapsedClock(null, Date.now()), null);
+  assert.deepEqual(elapsedClock(b, t('2026-10-24T12:00:00.000Z')), { value: '0:00' });
+  assert.deepEqual(elapsedClock(b, t('2026-10-24T12:47:59.000Z')), { value: '0:47' }, 'a part minute does not count yet');
+  assert.deepEqual(elapsedClock(b, t('2026-10-24T14:05:00.000Z')), { value: '2:05' });
+  assert.deepEqual(elapsedClock(b, t('2026-10-24T11:50:00.000Z')), { value: '0:00' }, 'a browser clock behind clock_start');
+  const stopped = { ...b, stopped_at: '2026-10-24T13:30:00.000Z' };
+  assert.deepEqual(elapsedClock(stopped, t('2026-10-24T20:00:00.000Z')), { value: '1:30' }, 'stops when the run ends');
+  assert.deepEqual(elapsedClock(stopped, t('2026-10-24T13:10:00.000Z')), { value: '1:10' });
 });
 
 test('pendingReviewers (3-3): one row per rostered reviewer with no live claim, on a slice being built or reviewed', () => {
@@ -240,4 +256,22 @@ test('PAUSED notice (6-1): the reason and the local clock time of the stop; none
   assert.match(pausedNotice({ paused: { reason: 'block_cap', at, blocks: 3 } })!, /^PAUSED · the conductor stopped after 3 blocks \d\d:\d\d$/);
   assert.equal(pausedNotice({}), null);
   assert.equal(pausedNotice(lane(happy)), null);
+});
+
+test('actionRows (6-2): a card\'s options with their then lines and its reply; an old commands-only card has no then and no reply; SIGNAL LOST has no reply', () => {
+  const g = gate1Card({ spec_path: '/s.md', assumptions: 0, lint: { ok: true, errors: [] } });
+  assert.deepEqual(actionRows(g), {
+    rows: [
+      { command: '/factory approve gate1', then: 'SLICE PLAN splits the spec into slices; the next stop is Gate 2' },
+      { command: '/factory rework gate1 <note…>', then: 'SPEC is redone with your note; Gate 1 comes back' },
+    ],
+    reply: 'Ask questions in chat; to change the spec, use rework.',
+  });
+  assert.deepEqual(actionRows({ commands: ['/factory approve gate1', '/factory rework gate1 <note…>'] }), {
+    rows: [{ command: '/factory approve gate1', then: '' }, { command: '/factory rework gate1 <note…>', then: '' }],
+  });
+  const sl = actionRows(signalLostCard('r-1'));
+  assert.deepEqual(sl.rows.map((r) => r.command), ['/factory resume r-1']);
+  assert.ok(sl.rows[0].then);
+  assert.equal('reply' in sl, false);
 });

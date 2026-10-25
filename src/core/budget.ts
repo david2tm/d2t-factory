@@ -13,13 +13,15 @@ export interface Budget {
   ends_ms: number;
 }
 
-// The clock runs from the run start, or from the exercise's own start when that was earlier.
+// The clock runs from the run start, or from the time limit's own start (the intake's `started`,
+// given only with a limit) when that was earlier.
 export function clockStart(runStartedTs: string, started?: string): string {
   const s = started ? Date.parse(started) : NaN;
   return Number.isFinite(s) && s < Date.parse(runStartedTs) ? new Date(s).toISOString() : runStartedTs;
 }
 
-// Null until a confirmed intake recorded a limit and a clock start.
+// Null until a confirmed intake recorded a limit and a clock start. Without a time limit it stays
+// null (6-2): no cut candidates, no cut deadline; the board shows elapsed time from clock_start.
 export function budgetOf(s: RunState): Budget | null {
   const start = s.clock_start ? Date.parse(s.clock_start) : NaN;
   const limit = s.intake?.limit_min;

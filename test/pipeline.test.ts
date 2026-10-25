@@ -1171,8 +1171,8 @@ test('acceptance (3-1): intake started 2 h ago with limit_min 100; at BUILD with
   const r = toGate2(w, s, t, NO_SERVER, { limit_min: 100, started: started2h }, slices);
   const { id, c, wt } = r;
   const ic = last(w, id, 'intake_confirmed');
-  assert.deepEqual(ic.data.intake, { limit_min: 100, slice_timebox_min: 30, ui_free: true, reviewer_overrides: { add: [], remove: [] }, started: started2h });
-  assert.equal(ic.data.clock_start, started2h, 'the exercise started before the run');
+  assert.deepEqual(ic.data.intake, { task: 'add a footer', scope: { in: ['the footer'], out: [] }, limit_min: 100, slice_timebox_min: 30, ui_free: true, reviewer_overrides: { add: [], remove: [] }, started: started2h });
+  assert.equal(ic.data.clock_start, started2h, 'the time limit started before the run');
   assert.equal(ok(decide(w, s, 'approve gate2', { cwd: wt })).phase, 'BUILD');
 
   // The cut point (2:00 ago + 1:40 − 0:40) passed before BUILD: the card comes before S1 starts.
@@ -1234,6 +1234,30 @@ test('keep: the cut card is answered with nothing cut, the Backlog slices lose A
   assert.deepEqual(lane.cards.filter((x) => x.kind === 'slice').map((x) => [x.id, x.state, x.at_risk ?? false]), [['slice:S1', 'BUILDING', false], ['slice:S2', 'BACKLOG', false]]);
   assert.deepEqual(stateOf(w, id).slices.S2.state, 'BACKLOG');
   assert.equal(cmds.filter((e) => e.kind === 'ask_raised').length, 1);
+  assert.deepEqual(stateOf(w, id).rejected, []);
+  ok(decide(w, s, 'abandon', { cwd: wt }));
+});
+
+test('no time limit (6-2): gate 2 names no cut point; BUILD with Backlog slices raises no cut card at any time, and the lane budget has limit_min null', (t) => {
+  const w = world();
+  const s = 'sa';
+  const r = toGate2(w, s, t, NO_SERVER, { limit_min: undefined }, [{ id: 'S1', title: 'One', acs: ['AC-1', 'AC-2'] }, { id: 'S2', title: 'Two', acs: ['AC-2'] }]);
+  const { id, c, wt, gate2 } = r;
+  assert.equal('limit_min' in last(w, id, 'intake_confirmed').data.intake, false);
+  assert.equal(gate2.card.options[0].then, 'BUILD starts with the first slice; the next stop is the merge, unless an escalation comes first');
+  assert.match(gate2.card_text, /^Gate 2 — approve the slice plan\n[\s\S]*\nTo continue, type one of:\n {2}\/factory approve gate2 — BUILD starts/);
+  ok(decide(w, s, 'approve gate2', { cwd: wt }));
+  // A limit of 30 would have raised the cut card here (the keep test above): none without a limit.
+  const b1 = c.take(byKind('spawn', 'builder'));
+  assert.equal(b1.slice, 'S1');
+  const cmds = commands(w, id);
+  assert.equal(cmds.some((e) => e.kind === 'ask_raised'), false, 'no cut card');
+  const st = stateOf(w, id);
+  assert.deepEqual([st.phase, st.slices.S2.state], ['BUILD', 'BACKLOG']);
+  const lane = projectRun({ state: fold(cmds), commands: cmds, facts: [], skipped: [] }, { repo_hash: 'h', run_id: id });
+  assert.deepEqual(lane.budget, { clock_start: last(w, id, 'intake_confirmed').data.clock_start, limit_min: null, cut_at: null, ends_at: null, stopped_at: null });
+  assert.deepEqual([lane.deadlines.cut_at, lane.deadlines.ends_at], [null, null]);
+  assert.ok(lane.cards.every((x) => !x.at_risk), 'nothing at risk');
   assert.deepEqual(stateOf(w, id).rejected, []);
   ok(decide(w, s, 'abandon', { cwd: wt }));
 });

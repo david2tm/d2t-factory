@@ -41,7 +41,7 @@ test('INTAKE with no open intake step is due one ask_human conversation card, wi
   assert.deepEqual(d[0].card!.commands, []);
 });
 
-const INTAKE_FRONT = { limit_min: 120, ui_free: false, reviewer_overrides: { add: [], remove: [] } };
+const INTAKE_FRONT = { task: 'add a footer', scope: { in: ['the footer'], out: [] }, limit_min: 120, ui_free: false, reviewer_overrides: { add: [], remove: [] } };
 
 test('INTAKE: the open conversation blocks a second one; once reported with a valid intake the confirm card is due, once; terminal phases are due nothing, and so are BUILD, WRAP and MERGED without slices or probes', () => {
   const w = writer();
@@ -52,7 +52,11 @@ test('INTAKE: the open conversation blocks a second one; once reported with a va
   w.put('step_reported', { step_id: chat, output: { status: 'DONE', front: INTAKE_FRONT, sha256: 'x', path: '/o/out.md' } });
   const d = due(w.s);
   assert.deepEqual(d, [{ kind: 'ask_human', stage: 'INTAKE', attempt: 1, card: intakeConfirmCard({ ...INTAKE_FRONT, slice_timebox_min: 30 }) }]);
-  assert.deepEqual([d[0].card!.reason, d[0].card!.commands], ['limit 2:00 · slice time box 30 min · UI-free no · reviewers: default', ['/factory approve intake']]);
+  assert.deepEqual([d[0].card!.reason, d[0].card!.details, d[0].card!.commands], [
+    'time limit 2:00 · slice time box 30 min · UI-free no · reviewers: default', ['Task: add a footer', 'In scope: the footer', 'Out of scope: —'], ['/factory approve intake'],
+  ]);
+  assert.equal(d[0].card!.options![0].then, 'RECON maps the repo, then SCAFFOLD; the next stop is Gate 1');
+  assert.equal(due({ ...w.s, greenfield: true })[0].card!.options![0].then, 'FRAME picks the stack, then SCAFFOLD; the next stop is Gate 1', 'greenfield: FRAME');
   w.issue(d[0]);
   assert.deepEqual(due(w.s), [], 'one confirm card');
   // BUILD with no slice, WRAP without the CLI's git probe, MERGED outside the worktree, and the
@@ -208,6 +212,10 @@ test('SLICE_PLAN (3-3): slicer → plan.lint → gate_2 card with tags, deps and
   const [g] = due(w.s, IN);
   assert.equal(g.card!.type, 'gate_2');
   assert.equal(g.card!.reason, '2 slices: S1 Signup form (AC-1) [ui, input] · code, security, ux, a11y, ui; S2 Welcome mail (AC-1) ← S1 · code');
+  // 6-2: the approve then names the cut point only when the run has a time limit.
+  assert.equal(g.card!.options![0].then, 'BUILD starts with the first slice; the next stop is the merge, unless an escalation comes first', 'no time limit');
+  const limited = due({ ...w.s, intake: { limit_min: 120, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] } } }, IN)[0];
+  assert.equal(limited.card!.options![0].then, 'BUILD starts with the first slice; the next stop is the merge, unless an escalation or the cut point comes first');
   const gate = w.issue(g);
   assert.deepEqual(due(w.s, IN), []);
   // /factory rework gate2: the card answered, the slicer, its step_verified and the lint voided.

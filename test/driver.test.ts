@@ -200,7 +200,7 @@ test('next issues one intake conversation step with a brief and an output path; 
   fails(run(w, ['done', st.step_id, '--note', 'x', '--stdin', '--session', 'sa']), 'BAD_ARGS');
 });
 
-test('intake done: bad front matter is MISSING_EVIDENCE with nothing appended and the step still claimed; a valid intake is reported and the confirm card shows its four fields', () => {
+test('intake done: bad front matter is MISSING_EVIDENCE with nothing appended and the step still claimed; a valid intake is reported and the confirm card shows its task, scope and settings', () => {
   const w = world();
   const id = started(w, 'sa');
   const st = ok(run(w, ['next', '--session', 'sa'])).steps[0];
@@ -212,6 +212,9 @@ test('intake done: bad front matter is MISSING_EVIDENCE with nothing appended an
     [intakeOut({ reviewer_overrides: { add: [], remove: ['reviewer-code'] } }), /reviewer-code always runs/],
     [intakeOut({ started: 'yesterday-ish' }), /started must be an ISO-8601 time/],
     [intakeOut({ ui_free: undefined }), /ui_free must be true or false/],
+    [intakeOut({ task: undefined }), /task must be a non-empty one-line string/],
+    [intakeOut({ scope: ['the footer'] }), /scope must be a JSON object \{"in": \[\.\.\.\], "out": \[\.\.\.\]\}/],
+    [intakeOut({ limit_min: undefined, started: '2026-10-24T14:05:00.000Z' }), /started needs limit_min/],
     [intakeOut().replace('STATUS: DONE', 'STATUS: ESCALATE\nScope change: unclear'), /line 1 must be `STATUS: DONE`/],
   ] as const) {
     writeFileSync(st.output_path, text);
@@ -228,9 +231,16 @@ test('intake done: bad front matter is MISSING_EVIDENCE with nothing appended an
   assert.equal(rep.data.output.sha256, sha256(intakeOut({ slice_timebox_min: undefined })));
   const n = ok(run(w, ['next', '--session', 'sa']));
   assert.equal(n.steps.length, 1);
-  assert.deepEqual({ type: n.steps[0].card.type, reason: n.steps[0].card.reason, commands: n.steps[0].card.commands }, {
-    type: 'intake', reason: 'limit 2:00 · slice time box 30 min · UI-free no · reviewers: default', commands: ['/factory approve intake'],
+  assert.deepEqual({ type: n.steps[0].card.type, reason: n.steps[0].card.reason, details: n.steps[0].card.details, commands: n.steps[0].card.commands }, {
+    type: 'intake', reason: 'time limit 2:00 · slice time box 30 min · UI-free no · reviewers: default', details: ['Task: add a footer', 'In scope: the footer', 'Out of scope: —'], commands: ['/factory approve intake'],
   });
+  // 6-2: card_text is the card in the AD-34 order, for the conductor to print verbatim.
+  assert.equal(n.steps[0].card_text, [
+    'Intake — confirm the task', 'time limit 2:00 · slice time box 30 min · UI-free no · reviewers: default',
+    'Task: add a footer', 'In scope: the footer', 'Out of scope: —',
+    'To continue, type one of:', '  /factory approve intake — RECON maps the repo, then SCAFFOLD; the next stop is Gate 1',
+    "Reply in chat to change any of this; you'll get this card again.",
+  ].join('\n'));
   assert.deepEqual(n.in_flight, [st.step_id]);
   assert.deepEqual(ok(run(w, ['next', '--session', 'sa'])).steps.map((x: any) => x.step_id), [n.steps[0].step_id], 'one confirm card');
   say(w, 'sa', 'approve intake');
@@ -254,14 +264,14 @@ test('intake changed: done again on the reported step reissues it with the same 
   const fresh = ok(run(w, ['next', '--session', 'sa'])).steps;
   assert.equal(fresh.length, 1);
   assert.notEqual(fresh[0].step_id, confirm.step_id);
-  assert.equal(fresh[0].card.reason, 'limit 1:30 · slice time box 30 min · UI-free yes · reviewers: +reviewer-security -reviewer-ux');
+  assert.equal(fresh[0].card.reason, 'time limit 1:30 · slice time box 30 min · UI-free yes · reviewers: +reviewer-security -reviewer-ux');
   // The old step id is gone; the new one is what the next done names.
   fails(run(w, ['done', chat.step_id, '--session', 'sa']), 'ILLEGAL_TRANSITION', /is reissued/);
   say(w, 'sa', 'approve intake');
   const ap = ok(run(w, ['decide', '--session', 'sa']));
   assert.deepEqual(ap.verified, [fresh[0].step_id, d.step_id]);
   assert.deepEqual(commands(w, id).find((e) => e.kind === 'intake_confirmed').data.intake, {
-    limit_min: 90, slice_timebox_min: 30, ui_free: true, reviewer_overrides: { add: ['reviewer-security'], remove: ['reviewer-ux'] },
+    task: 'add a footer', scope: { in: ['the footer'], out: [] }, limit_min: 90, slice_timebox_min: 30, ui_free: true, reviewer_overrides: { add: ['reviewer-security'], remove: ['reviewer-ux'] },
   });
 });
 
@@ -277,7 +287,7 @@ test('intake changed after the confirm card was claimed: the claimed card is clo
   assert.deepEqual(tail[0].data, { step_id: confirm.step_id, evidence: [`superseded:${d.step_id}`] });
   assert.equal(tail[3].data.step_id, d.step_id);
   const fresh = ok(run(w, ['next', '--session', 'sa'])).steps;
-  assert.deepEqual(fresh.map((x: any) => x.card.reason), ['limit 2:30 · slice time box 45 min · UI-free no · reviewers: default']);
+  assert.deepEqual(fresh.map((x: any) => x.card.reason), ['time limit 2:30 · slice time box 45 min · UI-free no · reviewers: default']);
   assert.notEqual(fresh[0].step_id, confirm.step_id);
 });
 
@@ -315,7 +325,7 @@ test('acceptance: start → next → intake recorded → decide(approve intake) 
   assert.equal(ic.session, 'sa');
   assert.equal(ic.data.human_prompt.data.prompt_id, pid);
   assert.equal(ic.data.prompt_text.data.prompt, '/factory approve intake');
-  assert.deepEqual(ic.data.intake, { limit_min: 120, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] } });
+  assert.deepEqual(ic.data.intake, { task: 'add a footer', scope: { in: ['the footer'], out: [] }, limit_min: 120, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] } });
   assert.equal(ic.data.clock_start, commands(w, id)[0].ts, 'no started: the clock starts with the run');
   assert.deepEqual(ic.data.pins, [{ path: chat.output_path, sha256: sha256(intakeOut()) }]);
   assert.deepEqual(ic.data.evidence, [chat.step_id]);
@@ -352,7 +362,19 @@ test('approve intake: refused with no recorded intake (ILLEGAL_TRANSITION) and w
   assert.deepEqual(ok(run(w, ['next', '--session', 'sa'])).steps.map((x: any) => x.agent), ['d2t-factory:recon']);
 });
 
-test('intake: an earlier exercise start moves the clock start back; a later one leaves it at the run start', () => {
+test('intake (6-2): no time limit is valid; the card says so, the clock starts with the run, and the intake carries no limit', () => {
+  const w = world();
+  const id = started(w, 'sa');
+  const { confirm } = recordIntake((args) => ok(run(w, args)), 'sa', { limit_min: undefined });
+  assert.equal(confirm.card.reason, 'no time limit · slice time box 30 min · UI-free no · reviewers: default');
+  say(w, 'sa', 'approve intake');
+  ok(run(w, ['decide', '--session', 'sa']));
+  const ic = commands(w, id).find((e) => e.kind === 'intake_confirmed');
+  assert.equal('limit_min' in ic.data.intake, false);
+  assert.equal(ic.data.clock_start, commands(w, id)[0].ts);
+});
+
+test('intake: an earlier start of the time limit moves the clock start back; a later one leaves it at the run start', () => {
   for (const [offset, earlier] of [[-3600_000, true], [3600_000, false]] as const) {
     const w = world();
     const id = started(w, 'sa');

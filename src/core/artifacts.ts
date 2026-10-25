@@ -57,11 +57,21 @@ export const OVERRIDE_ROLES = ['reviewer-security', 'reviewer-ux', 'reviewer-a11
 const posInt = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0;
 const ISO_ZONED_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-// The intake the conductor writes after the INTAKE conversation (AD-27). A missing
-// slice_timebox_min becomes the default; `started` is normalized to ISO-8601 UTC.
+// The intake the conductor writes after the INTAKE conversation (AD-27). task and scope are
+// required (6-2); limit_min is optional (left out or null: no time limit, so no budget clock and no
+// cut); a missing slice_timebox_min becomes the default; `started` is accepted only with a limit
+// and is normalized to ISO-8601 UTC.
 export function validateIntake(f: Record<string, unknown>): Valid<Intake> {
   const errors: string[] = [];
-  if (!posInt(f.limit_min)) errors.push('limit_min must be a whole number of minutes above 0');
+  const oneLine = (v: unknown): v is string => isStr(v) && Boolean(v.trim()) && !/[\r\n]/.test(v);
+  const task = f.task;
+  if (!oneLine(task)) errors.push('task must be a non-empty one-line string');
+  const scope = f.scope;
+  const scopeOk = isObj(scope) && isStrList(scope.in) && isStrList(scope.out);
+  if (!scopeOk) errors.push('scope must be a JSON object {"in": [...], "out": [...]} of strings (either list may be empty)');
+  else for (const k of ['in', 'out'] as const) if (!(scope[k] as string[]).every(oneLine)) errors.push(`scope.${k} items must be non-empty one-line strings`);
+  const limit = f.limit_min ?? undefined;
+  if (limit !== undefined && !posInt(limit)) errors.push('limit_min must be a whole number of minutes above 0, or left out for no time limit');
   const tb = f.slice_timebox_min ?? undefined;
   if (tb !== undefined && !posInt(tb)) errors.push('slice_timebox_min must be a whole number of minutes above 0, or left out');
   if (typeof f.ui_free !== 'boolean') errors.push('ui_free must be true or false');
@@ -84,8 +94,10 @@ export function validateIntake(f: Record<string, unknown>): Valid<Intake> {
   const st = f.started ?? undefined;
   const at = isStr(st) && ISO_ZONED_RE.test(st) ? Date.parse(st) : NaN;
   if (st !== undefined && !Number.isFinite(at)) errors.push('started must be an ISO-8601 time with its zone, like "2026-10-24T14:05:00.000Z", or left out');
+  if (st !== undefined && limit === undefined) errors.push('started needs limit_min: leave started out when there is no time limit');
   const value: Intake = {
-    limit_min: f.limit_min as number, slice_timebox_min: (tb as number | undefined) ?? SLICE_TIMEBOX_DEFAULT_MS / 60_000, ui_free: f.ui_free as boolean,
+    task: isStr(task) ? task.trim() : '', scope: scopeOk ? { in: (scope.in as string[]).map((x) => x.trim()), out: (scope.out as string[]).map((x) => x.trim()) } : { in: [], out: [] },
+    ...(limit !== undefined ? { limit_min: limit as number } : {}), slice_timebox_min: (tb as number | undefined) ?? SLICE_TIMEBOX_DEFAULT_MS / 60_000, ui_free: f.ui_free as boolean,
     reviewer_overrides: lists, ...(Number.isFinite(at) ? { started: new Date(at).toISOString() } : {}),
   };
   return result(errors, value);

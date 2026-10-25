@@ -6,11 +6,16 @@ export type Phase = 'INTAKE' | 'ORIENT' | 'SCAFFOLD' | 'SPEC_DESIGN' | 'SLICE_PL
 export type Column = 'backlog' | 'in_progress' | 'in_review' | 'needs_you' | 'done';
 export type TrackStatus = 'pending' | 'active' | 'waiting' | 'done';
 
+export interface CardOption { command: string; then: string }
+
 export interface Card {
   type: string;
   title: string;
   reason_label?: string;
   reason?: string;
+  details?: string[];
+  options?: CardOption[]; // commands = options.map(command); absent on cards recorded before 6-2
+  reply?: string;
   commands: string[];
   escalation?: string;
   sha?: string;
@@ -64,8 +69,9 @@ export interface Decision {
 
 export interface Deadlines { signal_lost_at: string | null; overdue_at: string | null; cut_at: string | null; ends_at: string | null; timebox_ends_at: string | null }
 
-// The Budget clock: absolute times; a terminal run's clock stops at stopped_at.
-export interface BudgetView { clock_start: string; limit_min: number; cut_at: string; ends_at: string; stopped_at: string | null }
+// The Budget clock: absolute times; a terminal run's clock stops at stopped_at. Without a time limit
+// only clock_start is set (the elapsed clock).
+export interface BudgetView { clock_start: string; limit_min: number | null; cut_at: string | null; ends_at: string | null; stopped_at: string | null }
 
 export interface Lane {
   run_id: string;

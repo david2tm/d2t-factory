@@ -1,5 +1,6 @@
 // Building, gating and appending commands. Callers hold the run lock (AD-29) around gate + append.
 import { existsSync } from 'node:fs';
+import { cardLines } from '../core/cards.ts';
 import { FactoryError } from '../core/errors.ts';
 import type { AnyEvent, DataByKind, Kind } from '../core/events.ts';
 import { validateEvent } from '../core/events.ts';
@@ -37,9 +38,12 @@ export function appendAll(hash: string, runId: string, events: readonly AnyEvent
 }
 
 // The step as `next` and `status` show it (AD-3). enter_worktree and exit_worktree carry the path.
+// An ask_human step with a card also carries card_text (6-2): the card's lines in the AD-34 order,
+// computed from the stored card, for the conductor to print verbatim. Output only, never event data.
 export function stepView(st: Step, state?: RunState): Record<string, unknown> {
   const v: Record<string, unknown> = { step_id: st.id, kind: st.kind, stage: st.stage, attempt: st.attempt };
   for (const k of ['agent', 'agent_id', 'slice', 'check', 'brief_path', 'output_path', 'card'] as const) if (st[k] !== undefined) v[k] = st[k];
+  if (st.kind === 'ask_human' && st.card) v.card_text = cardLines(st.card).join('\n');
   if ((st.kind === 'enter_worktree' || st.kind === 'exit_worktree') && state?.worktree) v.path = state.worktree;
   return v;
 }

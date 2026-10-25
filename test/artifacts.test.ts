@@ -155,19 +155,41 @@ test('isDependencyFile: manifests and lockfiles by basename, from an explicit li
   for (const f of no) assert.equal(isDependencyFile(f), false, f);
 });
 
-test('intake schema (AD-27): limit, an optional time box (default 30), UI-free, run-wide reviewer overrides and an optional earlier start', () => {
-  const base = { limit_min: 120, ui_free: false, reviewer_overrides: { add: ['reviewer-security'], remove: ['reviewer-ux'] } };
+test('intake schema (AD-27): task and scope, an optional limit, an optional time box (default 30), UI-free, run-wide reviewer overrides and an earlier start only with a limit', () => {
+  const base = {
+    task: 'add a footer', scope: { in: ['footer'], out: [] }, limit_min: 120, ui_free: false, reviewer_overrides: { add: ['reviewer-security'], remove: ['reviewer-ux'] },
+  };
   assert.deepEqual(validateIntake(base), { ok: true, value: { ...base, slice_timebox_min: 30 } });
   assert.deepEqual(validateIntake({ ...base, slice_timebox_min: 45, started: '2026-10-24T14:05:00Z', reviewer_overrides: {} }), {
-    ok: true, value: { limit_min: 120, slice_timebox_min: 45, ui_free: false, reviewer_overrides: { add: [], remove: [] }, started: '2026-10-24T14:05:00.000Z' },
+    ok: true, value: { task: 'add a footer', scope: { in: ['footer'], out: [] }, limit_min: 120, slice_timebox_min: 45, ui_free: false, reviewer_overrides: { add: [], remove: [] }, started: '2026-10-24T14:05:00.000Z' },
   });
   assert.equal(validateIntake({ ...base, slice_timebox_min: null }).ok, true, 'null is left out');
   const errs = (f: Record<string, unknown>): string[] => { const r = validateIntake(f); return r.ok ? [] : r.errors; };
   assert.deepEqual(errs({}), [
-    'limit_min must be a whole number of minutes above 0', 'ui_free must be true or false', 'reviewer_overrides must be a JSON object {"add": [...], "remove": [...]}',
+    'task must be a non-empty one-line string', 'scope must be a JSON object {"in": [...], "out": [...]} of strings (either list may be empty)',
+    'ui_free must be true or false', 'reviewer_overrides must be a JSON object {"add": [...], "remove": [...]}',
   ]);
+  // 6-2: no time limit (left out or null) is valid; started then is refused.
+  const { limit_min: _l, ...noLimit } = base;
+  assert.deepEqual(validateIntake(noLimit), { ok: true, value: { ...noLimit, slice_timebox_min: 30 } });
+  assert.deepEqual(validateIntake({ ...base, limit_min: null }), { ok: true, value: { ...noLimit, slice_timebox_min: 30 } });
+  assert.deepEqual(errs({ ...noLimit, started: '2026-10-24T14:05:00Z' }), ['started needs limit_min: leave started out when there is no time limit']);
   assert.match(errs({ ...base, limit_min: 0 })[0], /limit_min/);
   assert.match(errs({ ...base, limit_min: 90.5 })[0], /limit_min/);
+  assert.match(errs({ ...base, limit_min: '120' })[0], /limit_min/);
+  // task: one non-empty line; scope: two string lists, either may be empty.
+  assert.deepEqual(errs({ ...base, task: '' }), ['task must be a non-empty one-line string']);
+  assert.deepEqual(errs({ ...base, task: '  ' }), ['task must be a non-empty one-line string']);
+  assert.deepEqual(errs({ ...base, task: 'a\nb' }), ['task must be a non-empty one-line string']);
+  assert.deepEqual(errs({ ...base, task: 7 }), ['task must be a non-empty one-line string']);
+  for (const scope of [undefined, [], { in: [] }, { out: [] }, { in: 'x', out: [] }, { in: [1], out: [] }]) assert.match(errs({ ...base, scope })[0] ?? '', /^scope must be/, JSON.stringify(scope));
+  assert.equal(validateIntake({ ...base, scope: { in: [], out: [] } }).ok, true);
+  // Each scope item is one card line: non-empty, one line, trimmed.
+  assert.deepEqual(errs({ ...base, scope: { in: [''], out: [] } }), ['scope.in items must be non-empty one-line strings']);
+  assert.deepEqual(errs({ ...base, scope: { in: ['ok'], out: ['   '] } }), ['scope.out items must be non-empty one-line strings']);
+  assert.deepEqual(errs({ ...base, scope: { in: ['a\nb'], out: ['c\rd'] } }), ['scope.in items must be non-empty one-line strings', 'scope.out items must be non-empty one-line strings']);
+  const trimmed = validateIntake({ ...base, task: '  add a footer ', scope: { in: [' footer '], out: ['links  '] } });
+  assert.deepEqual(trimmed.ok && [trimmed.value.task, trimmed.value.scope], ['add a footer', { in: ['footer'], out: ['links'] }]);
   assert.match(errs({ ...base, slice_timebox_min: '30' })[0], /slice_timebox_min/);
   assert.deepEqual(errs({ ...base, reviewer_overrides: { remove: ['reviewer-code'] } }), ['reviewer-code always runs and cannot be removed']);
   assert.match(errs({ ...base, reviewer_overrides: { add: ['reviewer-perf'] } })[0], /reviewer-perf is not one of reviewer-security, reviewer-ux, reviewer-a11y, reviewer-ui/);
@@ -181,14 +203,14 @@ test('intake schema (AD-27): limit, an optional time box (default 30), UI-free, 
 });
 
 test("checkOutput('intake'): STATUS: DONE with front matter only; ESCALATE is rejected", () => {
-  const ok = checkOutput('intake', 'STATUS: DONE\n---\nlimit_min: 120\nui_free: false\nreviewer_overrides: {"add": [], "remove": []}\nstarted: "2026-10-24T14:05:00.000Z"\n---\nThe task.\n');
+  const ok = checkOutput('intake', 'STATUS: DONE\n---\ntask: "add a footer"\nscope: {"in": ["footer"], "out": []}\nlimit_min: 120\nui_free: false\nreviewer_overrides: {"add": [], "remove": []}\nstarted: "2026-10-24T14:05:00.000Z"\n---\nThe task.\n');
   assert.ok(ok.ok && ok.status === 'DONE' && ok.front.limit_min === 120);
   const esc = checkOutput('intake', 'STATUS: ESCALATE\nScope change: the human wants two apps\n');
   assert.equal(esc.ok, false);
   assert.match((esc as { error: string }).error, /line 1 must be `STATUS: DONE`/);
   assert.match((checkOutput('intake', 'STATUS: DONE\nno front matter\n') as { error: string }).error, /front matter missing/);
   assert.match((checkOutput('intake', 'VERDICT: APPROVE\n') as { error: string }).error, /line 1 must use STATUS/);
-  assert.match((checkOutput('intake', 'STATUS: DONE\n---\nlimit_min: 120\n---\n') as { error: string }).error, /front matter: ui_free must be true or false; reviewer_overrides/);
+  assert.match((checkOutput('intake', 'STATUS: DONE\n---\nlimit_min: 120\n---\n') as { error: string }).error, /front matter: task must be a non-empty one-line string; scope must be .*; ui_free must be true or false; reviewer_overrides/);
 });
 
 const DESIGN_BODY = '## Components to use\n- Button\n## States\n- empty\n## Accessibility floor\n- 4.5:1\n';

@@ -1,6 +1,7 @@
 <script lang="ts">
-  // A Needs You card: Type tag, `raised HH:MM`, the title, the REASON block, the cards it stands
-  // for, and the Action slot with card.commands verbatim (AD-34: chat and board match).
+  // A Needs You card: Type tag, `raised HH:MM`, the title, the REASON block, the details lines
+  // (6-2), the cards it stands for, and the Action slot with each option (command and then) and the
+  // reply line, verbatim (AD-34: chat and board match). Old cards fall back to card.commands.
   import { clockTime, typeTag } from '../lib/model.ts';
   import type { BoardCard, Lane, NeedsYou } from '../lib/types.ts';
   import ActionSlot from './ActionSlot.svelte';
@@ -25,9 +26,12 @@
   {:else if needs.card.reason}
     <p class="reason">{needs.card.reason}</p>
   {/if}
+  {#if needs.card.details?.length}
+    <div class="details">{#each needs.card.details as line, i (i)}<p>{line}</p>{/each}</div>
+  {/if}
   {#if stages.length}<div class="plates">{#each stages as c (c.id)}<StageCard {lane} card={c} {now} compact />{/each}</div>{/if}
   {#each slices as c (c.id)}<div class="plates"><SliceCard {lane} card={c} {now} compact /></div>{/each}
-  <ActionSlot commands={needs.card.commands} />
+  <ActionSlot card={needs.card} />
 </article>
 
 <style>
@@ -62,6 +66,8 @@
   .sid { display: inline-block; vertical-align: 2px; margin-right: 6px; font: 700 11px/1 var(--mono); letter-spacing: .06em; color: var(--needs-chip-ink); padding: 3px 5px; border-radius: var(--r-sm); border: 1px solid var(--gold-a3); background: color-mix(in srgb, black 30%, transparent); }
   .reason { margin: 0 0 10px; font: 13px/1.45 var(--sans); color: var(--needs-text-2); overflow-wrap: anywhere; position: relative; }
   .reason b { color: var(--needs-text); font-weight: 600; }
+  .details { margin: -4px 0 10px; display: grid; gap: 2px; position: relative; }
+  .details p { margin: 0; font: 13px/1.45 var(--sans); color: var(--needs-text-2); overflow-wrap: anywhere; }
   .lbl { display: block; font: 700 11px/1 var(--mono); letter-spacing: .1em; color: var(--needs-text-3); margin-bottom: 4px; }
   .plates { display: grid; gap: 6px; margin: 0 0 10px; position: relative; }
 </style>
