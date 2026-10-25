@@ -20,7 +20,7 @@ import type { Recording } from '../src/dashboard/web/src/lib/types.ts';
 const FIX = join(import.meta.dirname, 'fixtures');
 process.env.FACTORY_HOME = FIX; // recordings/ is test/fixtures/recordings; read only here
 const { loadRecording } = await import('../src/store/recording.ts');
-const NAMES = ['findings-escalation-rework', 'happy-path', 'illegal-then-abandon', 'pipeline-acceptance'];
+const NAMES = ['findings-escalation-rework', 'happy-path', 'illegal-then-abandon', 'pipeline-acceptance', 'two-runs'];
 
 const loaded = (name: string): LoadedRecording => {
   const r = loadRecording(name);
@@ -206,6 +206,31 @@ test('several runs: lanes in projectBoard order (newest run_started first), each
   assert.ok(lanes[1].last_event_at! <= lanes[0].last_event_at!);
   assert.ok(lanes[1].cards.flatMap((c) => c.claims).length > lanes[0].cards.flatMap((c) => c.claims).length, 'the first run is 5 s ahead');
   assert.deepEqual(pips(rec).map((p) => p.label).slice(0, 2), ['Intake · add-login-page-q7k2', 'Intake · second-run']);
+});
+
+test('Replay Flow 2 (5-1): the two-run recording shows two concurrent lanes, the newest on top, one in BUILD and one waiting at Gate 1; next decision crosses both runs\' pips', () => {
+  const rec = recOf('two-runs');
+  assert.deepEqual(rec.runs.map((r) => r.run_id), ['add-search-box-m3p8', 'add-signup-form-r5t1']);
+  const [a, b] = rec.runs.map((r) => r.run_id);
+  const lanes = boardAt(rec, ms(rec.end));
+  assert.deepEqual(lanes.map((l) => [l.run_id, l.phase, l.stage]), [[b, 'SPEC_DESIGN', 'SPEC'], [a, 'BUILD', 'BUILD']], 'B started later: on top');
+  assert.deepEqual(lanes[0].gates.map((g) => g.status), ['waiting', 'hollow']);
+  assert.deepEqual(lanes[0].needs_you.map((n) => n.card.type), ['gate_1']);
+  assert.deepEqual(lanes[1].needs_you, []);
+  assert.ok(lanes[1].cards.some((c) => c.id === 'slice:S1' && c.column === 'in_progress'), 'A builds S1');
+  // Before B starts, one lane; once it has, two.
+  const bStart = ms(rec.events.find((e) => rec.runs[e.run].run_id === b)!.at);
+  assert.deepEqual(boardAt(rec, bStart - 1).map((l) => l.run_id), [a]);
+  assert.deepEqual(boardAt(rec, bStart).map((l) => l.run_id), [b, a]);
+  // next decision from 00:00:00 visits every pip of both runs, in time order, each naming its run.
+  const ps = pips(rec);
+  const visited: string[] = [];
+  for (let p = nextPip(ps, ms(rec.start)); p; p = nextPip(ps, p.at)) {
+    visited.push(p.label);
+    const lane = boardAt(rec, p.at).find((l) => l.run_id === rec.runs[p.run].run_id)!;
+    assert.ok(lane.decisions.some((d) => d.id === p.id), `${p.label} is on its lane at its pip`);
+  }
+  assert.deepEqual(visited, [`Intake · ${a}`, `Intake · ${b}`, `Gate 1 · ${a}`, `Gate 2 · ${a}`]);
 });
 
 // --- the playback store ---------------------------------------------------------------------------

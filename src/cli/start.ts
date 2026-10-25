@@ -1,4 +1,6 @@
 // `factory start [task]` (AD-9, AD-25, AD-26): consumes the human's task prompt and starts a run.
+// While a live run holds the repo's exclusive claim (AD-15) it refuses with REFUSED_EXCLUSIVE before
+// anything is claimed: no run dir, no lane, and the prompt stays unconsumed.
 import { rmSync } from 'node:fs';
 import { FactoryError } from '../core/errors.ts';
 import { runId as newRunId } from '../store/ids.ts';
@@ -7,6 +9,7 @@ import { claimDir, withLock } from '../store/locks.ts';
 import { lockDir, runDir } from '../store/paths.ts';
 import { writeSessionFile } from '../store/sessions.ts';
 import type { Args } from './args.ts';
+import { exclusiveHolder, refusedExclusive } from './claims.ts';
 import { appendAll, gateOrThrow, makeEvent, requireSetup } from './commit.ts';
 import { ensureDashboard } from './dashboard.ts';
 import { headSha, repoHash, repoRoot, statusDigest } from './git.ts';
@@ -33,6 +36,8 @@ export async function start(args: Args): Promise<unknown> {
   }
 
   refuseOtherBinding(session, hash);
+  const holder = exclusiveHolder(hash);
+  if (holder) throw new FactoryError('REFUSED_EXCLUSIVE', refusedExclusive(holder));
   // AD-8: the main checkout's status is the brownfield baseline, probed before the lock.
   const t0 = Date.now();
   const status = statusDigest(repoRoot(cwd));

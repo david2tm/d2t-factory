@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "name": "two-runs",
+  "recorded_at": "2026-10-25T12:00:00.000Z",
+  "plugin_version": "0.1.0",
+  "runs": [
+    {
+      "repo_hash": "abc123def456",
+      "run_id": "add-search-box-m3p8"
+    },
+    {
+      "repo_hash": "abc123def456",
+      "run_id": "add-signup-form-r5t1"
+    }
+  ]
+}

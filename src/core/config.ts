@@ -10,6 +10,9 @@ export const MAX_RETRIGGER_ROUNDS = 2;
 export const MAX_STEP_ATTEMPTS = 3;
 export const PORT_RANGE = { min: 5100, max: 5199 } as const;
 export const LOCK_WAIT_MS = 10_000;
+// A lock or claim dir with no owner file yet (its creator is between mkdir and the write) counts as
+// held for this long after its mtime; older, its creator died there and it is stale (AD-29).
+export const CLAIM_GRACE_MS = 5_000;
 export const SPEC_MAX_LINES = 40;
 // `factory check`: the longest a test check may run, and how long health is polled before it fails.
 export const CHECK_TIMEOUT_MS = 10 * 60_000;

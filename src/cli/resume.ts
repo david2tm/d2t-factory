@@ -41,7 +41,7 @@ export async function resume(args: Args): Promise<unknown> {
   // Liveness runs a subprocess, so it is read before the lock and the holder re-checked inside.
   const before = loadRun(hash, id).state;
   const old = before.holder && before.holder !== session ? before.holder : undefined;
-  if (!takeover && old && sessionLive(old)) throw new FactoryError('CLAIM_TAKEN', `run ${id} is held by live session ${old}; type /factory resume ${id} to take it over`);
+  if (!takeover && old && sessionLive(old)) throw new FactoryError('CLAIM_TAKEN', `Run ${id} is already claimed by another session. Type /factory resume ${id} to take it over.`);
 
   const after = await withLock(lockDir(hash, id), () => {
     const { state } = loadRun(hash, id);

@@ -1,15 +1,15 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { MAX_LINE_BYTES } from '../src/core/config.ts';
+import { CLAIM_GRACE_MS, MAX_LINE_BYTES } from '../src/core/config.ts';
 import { FactoryError } from '../src/core/errors.ts';
 import { runId, slugify, ulid } from '../src/store/ids.ts';
 import { appendLine, dedupeById, readLines, serialize } from '../src/store/jsonl.ts';
 import { loadRun, readRedactValues } from '../src/store/load-run.ts';
-import { acquire, claimDir, withLock } from '../src/store/locks.ts';
+import { acquire, breakStale, claimDir, lockStale, withLock } from '../src/store/locks.ts';
 import { commandsFile, factsFile, lockDir, redactFile } from '../src/store/paths.ts';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'factory-test-'));
@@ -78,6 +78,76 @@ test('a lock left by a dead process is broken by renaming it aside', async () =>
   const release = await acquire(d, 500);
   assert.ok(readdirSync(root).some((n) => n.startsWith('lock.stale-')));
   release();
+});
+
+// A dir's mtime set back past the no-owner grace period.
+const age = (dir: string, ms = CLAIM_GRACE_MS + 1000): void => { const t = (Date.now() - ms) / 1000; utimesSync(dir, t, t); };
+const ownerOf = (dir: string): any => JSON.parse(readFileSync(join(dir, 'owner.json'), 'utf8'));
+
+test('two breakers race over a dead owner: the one that lost re-reads under the break mutex and never renames the fresh lock', async () => {
+  const root = tmp();
+  const d = join(root, 'lock');
+  const dead = spawnSync(process.execPath, ['-e', '0']).pid!;
+  mkdirSync(d);
+  writeFileSync(join(d, 'owner.json'), JSON.stringify({ pid: dead, host: hostname(), ts: 'then' }));
+  assert.equal(lockStale(d), true, 'B2 reads the dead owner');
+  // Meanwhile B1 breaks it (renamed aside) and re-acquires: a fresh lock at the same path.
+  renameSync(d, `${d}.stale-b1`);
+  const release = await acquire(d, 100);
+  const fresh = ownerOf(d);
+  // B2 now acts on what it read: under the mutex the owner is live, so nothing is renamed.
+  assert.equal(breakStale(d), null);
+  assert.deepEqual(ownerOf(d), fresh, 'B1\'s lock is intact');
+  assert.deepEqual(readdirSync(root).filter((n) => n.startsWith('lock.stale-')), ['lock.stale-b1']);
+  assert.equal(existsSync(`${d}.break`), false, 'the mutex is released');
+  await assert.rejects(acquire(d, 100), (e: unknown) => e instanceof FactoryError && e.code === 'LOCKED');
+  release();
+  assert.equal(existsSync(d), false);
+});
+
+test('the break mutex: a held one breaks nothing; one left by a dead breaker is cleared past the grace period', () => {
+  const root = tmp();
+  const d = join(root, 'lock');
+  mkdirSync(d);
+  age(d);
+  mkdirSync(`${d}.break`);
+  assert.equal(breakStale(d), null, 'another breaker holds the mutex');
+  assert.equal(existsSync(d), true);
+  age(`${d}.break`);
+  assert.equal(breakStale(d), null, 'the stale mutex is only cleared');
+  assert.equal(existsSync(`${d}.break`), false);
+  assert.match(breakStale(d) ?? '', /lock\.stale-/);
+  assert.equal(existsSync(d), false);
+});
+
+test('a lock dir with no owner.json is live within the grace period and stale past it', async () => {
+  const root = tmp();
+  const d = join(root, 'lock');
+  mkdirSync(d);
+  assert.equal(lockStale(d), false, 'its holder is between mkdir and the owner write');
+  await assert.rejects(acquire(d, 100), (e: unknown) => e instanceof FactoryError && e.code === 'LOCKED');
+  assert.equal(existsSync(d), true);
+  age(d);
+  assert.equal(lockStale(d), true);
+  const release = await acquire(d, 500);
+  assert.ok(readdirSync(root).some((n) => n.startsWith('lock.stale-')), 'broken by renaming it aside');
+  assert.equal(ownerOf(d).pid, process.pid);
+  release();
+  assert.equal(lockStale(join(root, 'missing')), false, 'a missing lock is not stale');
+});
+
+test('release removes the lock only while owner.json is still its own', async () => {
+  const root = tmp();
+  const d = join(root, 'lock');
+  const release = await acquire(d);
+  // Broken as stale meanwhile and taken by another holder.
+  renameSync(d, `${d}.stale-x`);
+  const other = await acquire(d, 100);
+  const theirs = ownerOf(d);
+  release();
+  assert.deepEqual(ownerOf(d), theirs, 'the other holder\'s lock stays');
+  other();
+  assert.equal(existsSync(d), false);
 });
 
 test('loadRun folds commands in file order and orders facts by (ts, id)', () => {

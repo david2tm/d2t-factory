@@ -18,7 +18,7 @@ import { loadRecording, type LoadedRecording } from '../src/store/recording.ts';
 
 const FIX = join(import.meta.dirname, 'fixtures');
 const RECS = join(FIX, 'recordings');
-const FIXTURE_RECORDINGS = ['findings-escalation-rework', 'happy-path', 'illegal-then-abandon', 'pipeline-acceptance'];
+const FIXTURE_RECORDINGS = ['findings-escalation-rework', 'happy-path', 'illegal-then-abandon', 'pipeline-acceptance', 'two-runs'];
 // test/fixtures/generate.ts and test/harness.ts write these into the recorded runs; redaction must
 // have removed every one of them.
 const REDACT_VALUES = ['fixture-dotenv-token-4417', 'hunter2-is-the-secret'];
@@ -87,6 +87,11 @@ test('decision flags: exactly the applied human decisions, never a rejected one'
   assert.deepEqual(kinds('illegal-then-abandon'), ['intake_confirmed', 'run_abandoned']);
   assert.ok(t.events.some((e) => e.kind === 'gate_2_passed' && !e.decision));
   assert.deepEqual(kinds('pipeline-acceptance'), ['intake_confirmed', 'gate_1_passed', 'gate_2_passed', 'merge_approved']);
+  // 5-1: two runs' decisions interleave by time.
+  const two = timeline('two-runs');
+  assert.deepEqual(two.events.filter((e) => e.decision).map((e) => `${e.kind} ${two.runs[e.run].run_id}`), [
+    'intake_confirmed add-search-box-m3p8', 'intake_confirmed add-signup-form-r5t1', 'gate_1_passed add-search-box-m3p8', 'gate_2_passed add-search-box-m3p8',
+  ]);
   for (const name of FIXTURE_RECORDINGS) {
     const t2 = timeline(name);
     for (const e of t2.events.filter((x) => x.decision)) assert.ok(t2.frames[e.frame].decisions.some((d) => d.id === e.id && d.decided_by === 'human'), `${e.kind} is in its frame, human-attributed`);

@@ -1,42 +1,20 @@
-// The run's machine resources (AD-15, AD-20): the port claim, the worktree with its exclude line,
-// and the gitignored files the run contract names, whose values feed redact.json (AD-14).
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+// The run's worktree (AD-15) with its exclude line, and the gitignored files the run contract
+// names, whose values feed redact.json (AD-14). The port claim lives in claims.ts.
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, normalize, sep } from 'node:path';
-import { PORT_RANGE } from '../core/config.ts';
-import { FactoryError } from '../core/errors.ts';
 import { readRedactValues } from '../store/load-run.ts';
-import { claimDir } from '../store/locks.ts';
-import { gitExcludeFile, inCheckout, isUnder, portDir, portOwnerFile, realish, redactFile, WORKTREES_EXCLUDE, worktreePath } from '../store/paths.ts';
+import { gitExcludeFile, inCheckout, isUnder, realish, redactFile, WORKTREES_EXCLUDE, worktreePath } from '../store/paths.ts';
 import { commonDir, isWorktreeTop, worktreeAdd } from './git.ts';
 
-function owner(n: number): string | null {
-  try { return readFileSync(portOwnerFile(n), 'utf8').trim(); } catch { return null; }
-}
-
-// `mkdir ports/<n>` from PORT_RANGE; a claim this run already holds is reused. None free → LOCKED.
-export function claimPort(runId: string): number {
-  for (let n = PORT_RANGE.min; n <= PORT_RANGE.max; n++) if (owner(n) === runId) return n;
-  for (let n = PORT_RANGE.min; n <= PORT_RANGE.max; n++) {
-    if (!claimDir(portDir(n))) continue;
-    writeFileSync(portOwnerFile(n), runId + '\n');
-    return n;
-  }
-  throw new FactoryError('LOCKED', `every port in ${PORT_RANGE.min}-${PORT_RANGE.max} is claimed`);
-}
-
-// Released only by a terminal run, and only if this run holds it.
-export function releasePort(runId: string, port: number | undefined): void {
-  if (port !== undefined && owner(port) === runId) rmSync(portDir(port), { recursive: true, force: true });
-}
-
-// `.claude/worktrees/` in the untracked `.git/info/exclude`, once.
+// `.claude/worktrees/` in the untracked `.git/info/exclude`. Appended, never rewritten: two runs
+// starting at once may both append it, and a duplicate line is harmless.
 export function ensureExclude(cwd: string): void {
   const file = gitExcludeFile(commonDir(cwd));
   let text = '';
   try { text = readFileSync(file, 'utf8'); } catch { /* none yet */ }
   if (text.split('\n').some((l) => l.trim() === WORKTREES_EXCLUDE)) return;
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, text + (text && !text.endsWith('\n') ? '\n' : '') + WORKTREES_EXCLUDE + '\n');
+  appendFileSync(file, (text && !text.endsWith('\n') ? '\n' : '') + WORKTREES_EXCLUDE + '\n');
 }
 
 // The worktree at <root>/.claude/worktrees/factory-<run-id> on factory/<run-id> from base_sha.

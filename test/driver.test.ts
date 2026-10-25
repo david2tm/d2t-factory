@@ -11,6 +11,7 @@ import { CLAIM_OVERDUE_MS, WAIT_MAX_MS } from '../src/core/config.ts';
 import { validateEvent } from '../src/core/events.ts';
 import { ulid } from '../src/store/ids.ts';
 import { appendLine, readLines } from '../src/store/jsonl.ts';
+import { exclusiveDir, exclusiveOwnerFile } from '../src/store/paths.ts';
 import { intakeOut, reconOut, recordIntake } from './harness.ts';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
@@ -485,7 +486,9 @@ test('bare resume defers to a live holder; typed resume <id> always rebinds', ()
   const id = started(w, 'sa');
   writeFileSync(w.agents, JSON.stringify([{ sessionId: 'sa', pid: 1 }]));
   const p1 = say(w, 'sb', '');
-  fails(run(w, ['resume', '--session', 'sb']), 'CLAIM_TAKEN');
+  const taken = run(w, ['resume', '--session', 'sb']);
+  fails(taken, 'CLAIM_TAKEN');
+  assert.equal(taken.out.error.message, `Run ${id} is already claimed by another session. Type /factory resume ${id} to take it over.`);
   assert.equal(consumed(w, p1), null);
   // Holder gone from `claude agents --json`: the bare resume rebinds.
   writeFileSync(w.agents, JSON.stringify([{ session_id: 'someone-else' }]));
@@ -526,6 +529,9 @@ test('resolution: the worktree run, else the single live run, else a list; unkno
   const list = ok(run(w, ['decide', '--session', 'sx'])).resolution.list;
   assert.deepEqual(list.map((x: any) => x.run_id).sort(), [r1, r2].sort());
   for (const x of list) { assert.equal(x.stage, 'INTAKE'); assert.equal(typeof x.last_ts, 'string'); }
+  // Each row reads `run id · title · stage · slice · last activity`: the title is the task, no live slice is `—`.
+  assert.deepEqual(list.map((x: any) => Object.keys(x)), [['run_id', 'title', 'stage', 'slice', 'last_ts'], ['run_id', 'title', 'stage', 'slice', 'last_ts']]);
+  assert.deepEqual(list.map((x: any) => [x.run_id, x.title, x.slice]).sort(), [[r1, 'first task', '—'], [r2, 'second task', '—']].sort());
   assert.deepEqual(ok(run(w, ['resume', '--session', 'sx'])).list.length, 2);
   // Inside the worktree of r1.
   const wt = join(w.repo, '.claude', 'worktrees', `factory-${r1}`, 'src');
@@ -693,6 +699,62 @@ test('a session that holds a live run cannot start or resume another one', () =>
   assert.equal(ok(run(w, ['decide', '--session', 'sa'])).phase, 'ABANDONED');
   say(w, 'sa', 'third task');
   ok(run(w, ['start', '--session', 'sa']));
+});
+
+// The repo's exclusive claim (AD-15) as SCAFFOLD leaves it: `<hash>/exclusive/run` naming its run.
+function holdExclusive(w: World, runId: string): string {
+  process.env.FACTORY_HOME = w.home;
+  try {
+    const hash = commands(w, runId)[0].data.repo_hash;
+    mkdirSync(exclusiveDir(hash), { recursive: true });
+    writeFileSync(exclusiveOwnerFile(hash), runId + '\n');
+    return exclusiveDir(hash);
+  } finally {
+    delete process.env.FACTORY_HOME;
+  }
+}
+
+test('start while a live run holds the exclusive claim: REFUSED_EXCLUSIVE naming it, no run dir, no binding, the prompt unconsumed; abandon releases the claim', () => {
+  const w = world();
+  const a = started(w, 'sa', 'first task');
+  const runs = readdirSync(runFile(w, a, '..'));
+  const excl = holdExclusive(w, a);
+  const p = say(w, 'sb', 'second task');
+  const r = run(w, ['start', '--session', 'sb']);
+  fails(r, 'REFUSED_EXCLUSIVE');
+  assert.equal(r.out.error.message, `Run refused — ${a} is live in this repo and its run contract lists a shared database. One run per repo.`);
+  assert.deepEqual(readdirSync(runFile(w, a, '..')), runs, 'no run dir was claimed');
+  assert.equal(consumed(w, p), null);
+  assert.equal(sessionFile(w, 'sb'), null);
+  assert.equal(existsSync(excl), true);
+  say(w, 'sa', 'abandon');
+  assert.equal(ok(run(w, ['decide', '--session', 'sa'])).phase, 'ABANDONED');
+  assert.equal(existsSync(excl), false, 'released once run_abandoned is on disk');
+  // The same prompt now starts.
+  const b = ok(run(w, ['start', '--session', 'sb'])).run_id;
+  assert.equal(consumed(w, p), 'started');
+  assert.notEqual(b, a);
+});
+
+test('a stale exclusive claim (its run terminal, or gone) is broken and does not refuse start', () => {
+  const w = world();
+  const a = started(w, 'sa', 'first task');
+  say(w, 'sa', 'abandon');
+  ok(run(w, ['decide', '--session', 'sa']));
+  const excl = holdExclusive(w, a); // left behind, as by a crash before the release
+  const b = started(w, 'sb', 'second task');
+  assert.ok(b);
+  assert.equal(existsSync(excl), false, 'the terminal run\'s claim was broken');
+  assert.deepEqual(readdirSync(join(excl, '..')).filter((n) => n.startsWith('exclusive')), [], 'nothing left aside');
+  // An owner run that no longer exists.
+  mkdirSync(excl);
+  writeFileSync(join(excl, 'run'), 'gone-zzzz\n');
+  assert.ok(started(w, 'sc', 'third task'));
+  assert.equal(existsSync(excl), false);
+  // A live owner still refuses.
+  holdExclusive(w, b);
+  say(w, 'sd', 'fourth task');
+  fails(run(w, ['start', '--session', 'sd']), 'REFUSED_EXCLUSIVE', new RegExp(`^Run refused — ${b} is live`));
 });
 
 test('after a typed takeover, done on a step the old session claimed is CLAIM_TAKEN', () => {

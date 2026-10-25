@@ -13,7 +13,7 @@ Run `factory decide --session ${CLAUDE_SESSION_ID}` first, every turn that start
 - `{"intent": "start", "task": …}`: run `factory start --session ${CLAUDE_SESSION_ID}`, then the loop.
 - `{"intent": "resume", "run_id": …}` or `{"intent": "bare"}` with a `resolution` that has a `run_id`: run `factory resume --session ${CLAUDE_SESSION_ID}` (add the run id when one was typed), then the loop.
 - After `start` or `resume`, when its `dashboard_url` is not null, print `Dashboard: <dashboard_url>` once on its own line. When it has a `dashboard_error` instead, print `Dashboard unavailable: <dashboard_error>` once on its own line.
-- `{"intent": "bare"}` with `resolution.list`: print each run's id, stage and last activity, ask the human to type `/factory resume <run-id>`, and end the turn.
+- `{"intent": "bare"}` with `resolution.list`: print one row per run, `<run_id> · <title> · <stage> · <slice> · <last activity>` (the last activity from `last_ts` as an age, like `2m ago`), ask the human to type `/factory resume <run-id>`, and end the turn.
 - `{"intent": "bare"}` with `resolution.none`: ask the human for the task (they type `/factory <task>`) and end the turn.
 - An error: print its message in one line and end the turn. `NO_HUMAN_PROMPT`, `ILLEGAL_TRANSITION` and `MISSING_EVIDENCE` mean the human retypes the command.
 

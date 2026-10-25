@@ -12,19 +12,26 @@ const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const RUN = 'add-login-page-q7k2';
 const SESSION = '11111111-2222-4333-8444-555555555555';
 
-function makeWriter() {
+// One run's writer: its run id, session, id prefix (22 characters) and first timestamp. The
+// defaults are the single-run scenarios'.
+interface WriterOpts { run?: string; session?: string; idPrefix?: string; t0?: number }
+
+function makeWriter(o: WriterOpts = {}) {
+  const run = o.run ?? RUN;
+  const session = o.session ?? SESSION;
+  const t0 = o.t0 ?? Date.UTC(2026, 9, 24, 9, 0, 0);
   let n = 0;
   const lines: object[] = [];
   const id = (): string => {
     let x = n++;
     let s = '';
     for (let i = 0; i < 6; i++) { s = B32[x % 32] + s; x = Math.floor(x / 32); }
-    return '01JQ000000000000000000' + s.slice(2);
+    return (o.idPrefix ?? '01JQ000000000000000000') + s.slice(2);
   };
-  const ts = (): string => new Date(Date.UTC(2026, 9, 24, 9, 0, 0) + n * 1000).toISOString();
+  const ts = (): string => new Date(t0 + n * 1000).toISOString();
   let last = '';
   const emit = (kind: string, data: object, extra: { actor?: string; corr?: string; session?: string } = {}): string => {
-    const e = { v: 1, id: id(), ts: ts(), run: RUN, session: extra.session, kind, actor: extra.actor ?? 'cli', corr: extra.corr ?? last ?? null, data };
+    const e = { v: 1, id: id(), ts: ts(), run, session: extra.session, kind, actor: extra.actor ?? 'cli', corr: extra.corr ?? last ?? null, data };
     if (e.session === undefined) delete (e as { session?: string }).session;
     const r = validateEvent(e);
     if (!r.ok && !extra.actor?.startsWith('!')) throw new Error(`${kind}: ${r.errors.join('; ')}`);
@@ -33,32 +40,44 @@ function makeWriter() {
     return e.id;
   };
   const decide = (kind: string, data: object = {}): string =>
-    emit(kind, { prompt_fact_id: `fact-${kind}`, ...data }, { actor: 'human', session: SESSION });
+    emit(kind, { prompt_fact_id: `fact-${kind}`, ...data }, { actor: 'human', session });
   // Issue → claim → report → verify one step; returns its id.
   const fullStep = (stage: string, kind: string, role?: string, slice?: string, verdict?: string): string => {
     const sid = emit('step_issued', { kind, stage, attempt: 1, role, agent: role ? `d2t-factory:${role}` : undefined, slice, output_path: `/x/artifacts/steps/${role ?? kind}/out.md` });
-    emit('step_claimed', { step_id: sid, agent_id: role ? `agent-${role}` : undefined }, { corr: sid, session: SESSION });
-    emit('step_reported', { step_id: sid, sha: role === 'builder' ? 'b1d0000' : undefined }, { corr: sid, actor: 'conductor', session: SESSION });
+    emit('step_claimed', { step_id: sid, agent_id: role ? `agent-${role}` : undefined }, { corr: sid, session });
+    emit('step_reported', { step_id: sid, sha: role === 'builder' ? 'b1d0000' : undefined }, { corr: sid, actor: 'conductor', session });
     emit('step_verified', { step_id: sid, evidence: ['fact-stop', 'fact-output'], verdict }, { corr: sid });
     return sid;
   };
-  return { emit, decide, fullStep, lines };
+  return { emit, decide, fullStep, lines, run, session };
 }
 
-function start(w: ReturnType<typeof makeWriter>): void {
-  w.emit('run_started', { task: 'add login page', repo_hash: 'abc123def456', base_sha: 'base000', branch: `factory/${RUN}` }, { corr: '' });
-  w.emit('session_bound', { session: SESSION });
+function start(w: ReturnType<typeof makeWriter>, task = 'add login page'): void {
+  w.emit('run_started', { task, repo_hash: 'abc123def456', base_sha: 'base000', branch: `factory/${w.run}` }, { corr: '' });
+  w.emit('session_bound', { session: w.session });
 }
 
-function toBuild(w: ReturnType<typeof makeWriter>, slices: string[]): void {
-  start(w);
+// … → gate 1 decided, or (o.gate1 false) its card issued and waiting.
+function toGate1(w: ReturnType<typeof makeWriter>, o: { task?: string; gate1?: boolean } = {}): void {
+  start(w, o.task);
   w.decide('intake_confirmed');
   w.emit('stage_completed', { stage: 'RECON' });
   w.fullStep('SCAFFOLD', 'enter_worktree');
   w.fullStep('SCAFFOLD', 'spawn', 'scaffolder');
   w.fullStep('SPEC', 'spawn', 'spec-writer');
   w.emit('check_ran', { check: 'spec.lint', exit_code: 0, duration_ms: 12, basis_seq: 20 });
+  if (o.gate1 === false) {
+    w.emit('step_issued', {
+      kind: 'ask_human', stage: 'SPEC', attempt: 1,
+      card: { type: 'gate_1', title: 'Gate 1 — approve the spec', reason_label: 'Spec', reason: '/x/artifacts/steps/spec-writer/out.md · 1 assumption to check', commands: ['/factory approve gate1', '/factory rework gate1 <note…>'] },
+    });
+    return;
+  }
   w.decide('gate_1_passed');
+}
+
+function toBuild(w: ReturnType<typeof makeWriter>, slices: string[], task?: string): void {
+  toGate1(w, { task });
   w.fullStep('SLICE_PLAN', 'spawn', 'slicer');
   w.emit('check_ran', { check: 'plan.lint', exit_code: 0, duration_ms: 9, basis_seq: 26 });
   w.decide('gate_2_passed', { slices: slices.map((id) => ({ id, title: `slice ${id}` })) });
@@ -138,10 +157,10 @@ const plus = (ts: string, ms: number): string => new Date(Date.parse(ts) + ms).t
 // tool run carrying both secrets on the ts of intake_confirmed (a tie: the fact replays first), and a
 // session end two seconds after the last command.
 let factN = 0;
-function factsFor(lines: object[]): object[] {
+function factsFor(lines: object[], run = RUN, session = SESSION): object[] {
   const cmds = lines as { ts: string; kind: string }[];
   const fact = (kind: string, ts: string, data: object): object => {
-    const e = { v: 1, id: `01JQF00000000000000000${String(factN++).padStart(4, '0')}`, ts, run: RUN, session: SESSION, kind, actor: 'hook', corr: null, data };
+    const e = { v: 1, id: `01JQF00000000000000000${String(factN++).padStart(4, '0')}`, ts, run, session, kind, actor: 'hook', corr: null, data };
     const r = validateEvent(e);
     if (!r.ok) throw new Error(`${kind}: ${r.errors.join('; ')}`);
     return e;
@@ -157,22 +176,28 @@ function factsFor(lines: object[]): object[] {
 
 const RECORDINGS = join(here, 'recordings');
 const { writeRecording } = await import('../../src/cli/record.ts');
-for (const [name, lines] of Object.entries(built)) {
+interface RecordedRun { run: string; session: string; lines: object[] }
+
+// One fixture recording of the given runs (one repo), each with its facts, redact.json, an artifact
+// and its session's transcript.
+function recordFixture(name: string, runs: RecordedRun[]): void {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'factory-fixture-rec-')));
   process.env.FACTORY_HOME = join(base, '.factory');
   process.env.FACTORY_CLAUDE_PROJECTS = join(base, 'projects');
-  const run = join(base, '.factory', HASH, 'runs', RUN);
   const put = (file: string, text: string): void => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text); };
   const jsonl = (xs: object[]): string => xs.map((x) => JSON.stringify(x) + '\n').join('');
-  put(join(run, 'commands.jsonl'), jsonl(lines));
-  put(join(run, 'facts', `${SESSION}-main.jsonl`), jsonl(factsFor(lines)));
-  put(join(run, 'redact.json'), JSON.stringify({ values: [FIXTURE_VALUE] }));
-  put(join(run, 'artifacts', 'steps', 'enter_worktree', 'out.md'), `STATUS: DONE\nUsed API_TOKEN=${FIXTURE_VALUE} from .env\n`);
-  put(join(base, 'projects', '-repo', `${SESSION}.jsonl`), jsonl([
-    { type: 'user', sessionId: SESSION, message: { content: `/factory ${transcriptMarker(name)} with ${FIXTURE_VALUE}` } },
-    { type: 'assistant', sessionId: SESSION, message: { content: `the key is ${FIXTURE_KEY}` } },
-  ]));
-  const rec = writeRecording(name, [{ hash: HASH, runId: RUN }]);
+  for (const { run: id, session, lines } of runs) {
+    const run = join(base, '.factory', HASH, 'runs', id);
+    put(join(run, 'commands.jsonl'), jsonl(lines));
+    put(join(run, 'facts', `${session}-main.jsonl`), jsonl(factsFor(lines, id, session)));
+    put(join(run, 'redact.json'), JSON.stringify({ values: [FIXTURE_VALUE] }));
+    put(join(run, 'artifacts', 'steps', 'enter_worktree', 'out.md'), `STATUS: DONE\nUsed API_TOKEN=${FIXTURE_VALUE} from .env\n`);
+    put(join(base, 'projects', '-repo', `${session}.jsonl`), jsonl([
+      { type: 'user', sessionId: session, message: { content: `/factory ${transcriptMarker(name)} with ${FIXTURE_VALUE}` } },
+      { type: 'assistant', sessionId: session, message: { content: `the key is ${FIXTURE_KEY}` } },
+    ]));
+  }
+  const rec = writeRecording(name, runs.map((r) => ({ hash: HASH, runId: r.run })));
   // A deterministic recorded_at; the rest of the manifest is writeRecording's.
   const manifest = join(rec.path, 'manifest.json');
   writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), recorded_at: RECORDED_AT }, null, 2) + '\n');
@@ -181,3 +206,22 @@ for (const [name, lines] of Object.entries(built)) {
   rmSync(base, { recursive: true, force: true });
   process.stdout.write(`recordings/${name}: ${rec.files} files, transcripts ${rec.transcripts.join(', ')}\n`);
 }
+
+for (const [name, lines] of Object.entries(built)) recordFixture(name, [{ run: RUN, session: SESSION, lines }]);
+
+// --- the two-run recording (5-1) -----------------------------------------------------------------
+// Two concurrent runs in one repo, two conductor sessions: A started first and is in BUILD with its
+// builder at work; B started 12.5 s later and waits at Gate 1. Replay Flow 2 shows both lanes (B
+// on top) and `next decision` crosses both runs' pips. Distinct id prefixes keep event ids unique.
+const RUN_A = 'add-search-box-m3p8';
+const RUN_B = 'add-signup-form-r5t1';
+const SESSION_B = '66666666-7777-4888-9999-aaaaaaaaaaaa';
+const T0 = Date.UTC(2026, 9, 25, 9, 0, 0);
+const a = makeWriter({ run: RUN_A, idPrefix: '01JQA00000000000000000', t0: T0 });
+toBuild(a, ['S1', 'S2'], 'add a search box');
+a.emit('slice_started', { slice: 'S1' });
+const builder = a.emit('step_issued', { kind: 'spawn', stage: 'BUILD', attempt: 1, role: 'builder', agent: 'd2t-factory:builder', slice: 'S1', output_path: '/x/artifacts/steps/builder/out.md' });
+a.emit('step_claimed', { step_id: builder, agent_id: 'agent-builder' }, { corr: builder, session: SESSION });
+const b = makeWriter({ run: RUN_B, session: SESSION_B, idPrefix: '01JQB00000000000000000', t0: T0 + 12_500 });
+toGate1(b, { task: 'add a signup form', gate1: false });
+recordFixture('two-runs', [{ run: RUN_A, session: SESSION, lines: a.lines }, { run: RUN_B, session: SESSION_B, lines: b.lines }]);

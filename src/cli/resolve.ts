@@ -4,6 +4,7 @@ import { sep } from 'node:path';
 import { FactoryError } from '../core/errors.ts';
 import type { Stage } from '../core/events.ts';
 import { boardStage, isTerminal, type RunState } from '../core/reducer.ts';
+import { liveSlices } from '../core/verify.ts';
 import { loadRun, type LoadedRun } from '../store/load-run.ts';
 import { commandsFile, runsDir } from '../store/paths.ts';
 import { isSafeId, readSessionFile, writeSessionFile } from '../store/sessions.ts';
@@ -53,12 +54,14 @@ export function requireHolder(hash: string, runId: string, run: LoadedRun, sessi
   throw new FactoryError('NOT_HOLDER', `session ${session} is not the holder of run ${run.state.run_id} (holder ${run.state.holder ?? 'none'})`);
 }
 
-export interface RunSummary { run_id: string; stage: Stage; last_ts: string | null }
+// One resume-list row, in the Swimlane header's vocabulary: `run id · title · stage · slice · last
+// activity`. The title is the run's task; the slice is its first live slice, or `—`.
+export interface RunSummary { run_id: string; title: string; stage: Stage; slice: string; last_ts: string | null }
 
 export const runExists = (hash: string, runId: string): boolean => isSafeId(runId) && existsSync(commandsFile(hash, runId));
 
 function summary(state: RunState, runId: string): RunSummary {
-  return { run_id: runId, stage: boardStage(state), last_ts: state.last_ts };
+  return { run_id: runId, title: state.task ?? '', stage: boardStage(state), slice: liveSlices(state)[0]?.id ?? '—', last_ts: state.last_ts };
 }
 
 function liveRuns(hash: string): RunSummary[] {

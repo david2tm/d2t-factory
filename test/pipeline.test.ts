@@ -3,7 +3,7 @@
 // housekeeping and recording. The tests play the conductor and its agents; agent facts come from
 // the real 1-3 hooks. The dev server binds a local port (tests that need it are skipped without).
 import { strict as assert } from 'node:assert';
-import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { createHash } from 'node:crypto';
@@ -282,6 +282,29 @@ test('port range exhausted at SCAFFOLD → LOCKED', () => {
   ok(c.agent(recon, reconOut(), 'ag-recon'));
   for (let p = 5100; p <= 5199; p++) mkdirSync(join(w.home, 'ports', String(p)), { recursive: true });
   fails(run(w, ['next', '--session', 'sa']), 'LOCKED', /every port/);
+});
+
+test('every port claimed at SCAFFOLD: one whose owner run is abandoned or gone is broken and re-claimed (5-1)', () => {
+  const w = world();
+  const live = started(w, 'sa').id;
+  const abandoned = started(w, 'sb', 'add a header').id;
+  ok(decide(w, 'sb', 'abandon'));
+  const { id, c } = started(w, 'sc', 'add a sidebar');
+  const ports = join(w.home, 'ports');
+  for (let p = 5100; p <= 5199; p++) {
+    mkdirSync(join(ports, String(p)), { recursive: true });
+    writeFileSync(join(ports, String(p), 'run'), `${p === 5150 ? abandoned : p === 5180 ? 'gone-zzzz' : live}\n`);
+  }
+  const recon = c.take(byKind('spawn', 'recon'));
+  ok(c.agent(recon, reconOut(), 'ag-recon'));
+  c.take(byKind('enter_worktree'));
+  const port = portOf(w, id);
+  assert.ok([5150, 5180].includes(port), `took ${port}`);
+  assert.equal(readFileSync(join(ports, String(port), 'run'), 'utf8'), `${id}\n`);
+  assert.deepEqual(readdirSync(ports).filter((n) => /\.(stale-|break)/.test(n)), [], 'nothing left aside');
+  assert.equal(readdirSync(ports).length, 100);
+  ok(decide(w, 'sc', 'abandon', { cwd: c.cwd }));
+  ok(decide(w, 'sa', 'abandon'));
 });
 
 test('scaffold failures: a wrong port raises the card, retry reissues with the note, a failing test raises it again, accept verifies with the failing checks, abandon kills the server and frees the port', SERVER, (t) => {
@@ -1970,4 +1993,257 @@ test('orphans at the reissue cap (3-4): an agent stopped without output through 
   assert.ok(!commands(w, id).slice(before).some((e) => e.kind === 'ask_raised' || e.kind === 'step_reissued'), 'nothing more for it');
   assert.equal(commands(w, id).filter((e) => e.kind === 'step_reissued' && e.data.old === st.step_id).length, 0);
   ok(decide(w, 'sd', 'abandon'));
+});
+
+// --- 5-1: parallel runs, the exclusive claim and multi-run recording ------------------------------
+
+const repoHashOf = (w: World, id: string): string => stateOf(w, id).repo_hash!;
+const exclusiveDirOf = (w: World, id: string): string => join(w.home, repoHashOf(w, id), 'exclusive');
+
+test('parallel (5-1): two runs in one repo, interleaved to run_completed, on their own branches and ports with no exclusive claim; the resume list shows both with title and slice; the main checkout is untouched; claims go only after run_completed is on disk', (t) => {
+  const w = world();
+  const before = git(w.repo, 'status', '--porcelain=v2');
+  const tasks = ['add a footer', 'add a header'];
+  const files = ['footer.js', 'header.js'];
+  const runs = (['sa', 'sb'] as const).map((s, i) => ({ s, ...started(w, s, tasks[i]), wt: '' }));
+  t.after(() => { for (const r of runs) run(w, ['devserver', 'down', '--session', r.s]); });
+  const each = <T>(f: (r: (typeof runs)[number], i: number) => T): T[] => runs.map(f);
+
+  // RECON for both (B's first next comes before A's recon is cached, so both spawn one).
+  const recons = each((r) => r.c.take(byKind('spawn', 'recon')));
+  each((r, i) => assert.equal(ok(r.c.agent(recons[i], reconOut(), `ag-recon-${r.s}`)).state, 'verified'));
+  const enters = each((r) => r.c.take(byKind('enter_worktree')));
+  each((r, i) => { r.wt = enters[i].path; r.c.cwd = r.wt; assert.equal(ok(r.c.done(enters[i].step_id)).state, 'verified'); });
+  const ports = each((r) => portOf(w, r.id));
+  assert.notEqual(ports[0], ports[1], 'distinct ports');
+  assert.notEqual(runs[0].wt, runs[1].wt);
+  // SCAFFOLD, SPEC, gate 1, the plan, gate 2: one stage at a time, A then B.
+  const scs = each((r) => r.c.take(byKind('spawn', 'scaffolder')));
+  each((r, i) => ok(r.c.agent(scs[i], scaffoldOut(contract(ports[i], NO_SERVER)), `ag-scaffold-${r.s}`)));
+  each((r) => assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]));
+  const specs = each((r) => r.c.take(byKind('spawn', 'spec-writer')));
+  each((r, i) => ok(r.c.agent(specs[i], specOut(tasks[i]), `ag-spec-${r.s}`)));
+  each((r) => assert.deepEqual(r.c.checks().map((x) => x.passed), [true]));
+  each((r) => { r.c.take(card('gate_1')); ok(decide(w, r.s, 'approve gate1', { cwd: r.c.cwd })); });
+  each((r, i) => r.c.plan([{ id: 'S1', title: tasks[i], acs: ['AC-1', 'AC-2'] }], `ag-slicer-${r.s}`));
+  each((r) => { r.c.take(card('gate_2')); assert.equal(ok(decide(w, r.s, 'approve gate2', { cwd: r.c.cwd })).phase, 'BUILD'); });
+  assert.equal(existsSync(exclusiveDirOf(w, runs[0].id)), false, 'no shared service: no exclusive claim');
+
+  // BUILD: both builders at work. A bare /factory in the main checkout lists both runs.
+  const bs = each((r) => r.c.take(byKind('spawn', 'builder')));
+  say(w, 'sx', '');
+  const list = ok(run(w, ['decide', '--session', 'sx'])).resolution.list;
+  assert.deepEqual(list.map((x: any) => [x.run_id, x.title, x.stage, x.slice]).sort(), each((r, i) => [r.id, tasks[i], 'BUILD', 'S1']).sort());
+  assert.ok(list.every((x: any) => typeof x.last_ts === 'string'));
+  each((r, i) => {
+    writeFileSync(join(r.wt, files[i]), `module.exports = '${files[i]}';\n`);
+    ok(r.c.agent(bs[i], builderOut(`Added ${files[i]}`), `ag-b-${r.s}`));
+  });
+  each((r) => assert.deepEqual(r.c.checks().map((x) => [x.name, x.passed]), [['contract.test', true]]));
+  const rvs = each((r) => r.c.take(byKind('spawn', 'reviewer-code')));
+  each((r, i) => assert.equal(ok(r.c.agent(rvs[i], approveOut(), `ag-rv-${r.s}`)).state, 'verified'));
+  each((r) => assert.deepEqual(r.c.wrapChecks().map((x) => x.passed), [true, true]));
+  each((r) => r.c.take(card('merge')));
+  // Each worktree holds only its own run's change.
+  assert.deepEqual(each((r, i) => [existsSync(join(r.wt, files[i])), existsSync(join(r.wt, files[1 - i]))]), [[true, false], [true, false]]);
+
+  // A merges and completes. Its run_completed cannot be appended at first: its claims stay.
+  const [A, B] = runs;
+  assert.equal(ok(decide(w, A.s, 'merge', { cwd: A.wt })).phase, 'MERGED');
+  const exA = A.c.take(byKind('exit_worktree'));
+  A.c.cwd = w.repo;
+  ok(A.c.done(exA.step_id));
+  const portA = join(w.home, 'ports', String(ports[0]));
+  if (process.getuid?.() !== 0) {
+    const log = join(runDir(w, A.id), 'commands.jsonl');
+    chmodSync(log, 0o444);
+    assert.notEqual(run(w, ['next', '--session', A.s]).code, 0, 'the append fails');
+    chmodSync(log, 0o644);
+    assert.equal(stateOf(w, A.id).phase, 'MERGED');
+    assert.equal(existsSync(portA), true, 'not released before run_completed is on disk');
+  }
+  const finA = A.c.next();
+  assert.equal(finA.done, true);
+  assert.equal(last(w, A.id, 'run_completed').kind, 'run_completed');
+  assert.equal(existsSync(portA), false, 'released once the fold is terminal');
+  assert.equal(existsSync(join(w.home, 'ports', String(ports[1]))), true, "B's port is still B's");
+
+  // B: its card is stale (the target moved with A's merge); fresh checks on the integrated head, then merge.
+  assert.deepEqual(B.c.wrapChecks().map((x) => x.passed), [true, true]);
+  B.c.take(card('merge'));
+  assert.equal(ok(decide(w, B.s, 'merge', { cwd: B.wt })).phase, 'MERGED');
+  const exB = B.c.take(byKind('exit_worktree'));
+  B.c.cwd = w.repo;
+  ok(B.c.done(exB.step_id));
+  assert.equal(B.c.next().done, true);
+
+  for (const [i, r] of runs.entries()) {
+    const s = stateOf(w, r.id);
+    assert.deepEqual([s.phase, s.branch, last(w, r.id, 'run_completed').kind], ['COMPLETED', `factory/${r.id}`, 'run_completed']);
+    assert.equal(git(w.repo, 'merge-base', '--is-ancestor', `factory/${r.id}`, 'HEAD'), '', `factory/${r.id} is merged`);
+    assert.equal(existsSync(join(w.home, 'ports', String(ports[i]))), false);
+    assert.equal(existsSync(r.wt), false, 'the worktree is gone');
+    assert.deepEqual(s.rejected, []);
+    for (const e of commands(w, r.id)) assert.ok(validateEvent(e).ok, JSON.stringify(e));
+  }
+  assert.deepEqual(git(w.repo, 'branch', '--list', 'factory/*', '--format=%(refname:short)').trim().split('\n').sort(), each((r) => `factory/${r.id}`).sort());
+  assert.deepEqual(files.map((f) => readFileSync(join(w.repo, f), 'utf8')), files.map((f) => `module.exports = '${f}';\n`));
+  assert.equal(git(w.repo, 'status', '--porcelain=v2'), before, "the main checkout's git status is unchanged");
+  assert.equal(existsSync(exclusiveDirOf(w, A.id)), false);
+});
+
+const SHARED = { ...NO_SERVER, services: [{ name: 'postgres', shared: true }] };
+
+// Two runs, sa and sb, each at SCAFFOLD inside its worktree. Both are started before either has a
+// recon to cache, so each spawns its own.
+function bothAtScaffold(w: World, t: TestContext) {
+  const rs = (['sa', 'sb'] as const).map((s, i) => ({ s, ...started(w, s, ['add a footer', 'add a header'][i]) })).map((r) => {
+    t.after(() => { run(w, ['devserver', 'down', '--session', r.s]); });
+    return { ...r, recon: r.c.take(byKind('spawn', 'recon')) };
+  }).map((r) => {
+    ok(r.c.agent(r.recon, reconOut(), `ag-recon-${r.s}`));
+    const enter = r.c.take(byKind('enter_worktree'));
+    r.c.cwd = enter.path;
+    ok(r.c.done(enter.step_id));
+    return { ...r, port: portOf(w, r.id) };
+  });
+  assert.notEqual(rs[0].port, rs[1].port);
+  return rs;
+}
+
+// The run's scaffolder reports `o`'s contract and both checks pass; returns the scaffolder step.
+function scaffolds(r: ReturnType<typeof bothAtScaffold>[number], o: Record<string, unknown>) {
+  const sc = r.c.take(byKind('spawn', 'scaffolder'));
+  ok(r.c.agent(sc, scaffoldOut(contract(r.port, o)), `ag-scaffold-${r.s}`));
+  assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]);
+  return sc;
+}
+
+const refusal = (id: string): string => `Run refused — ${id} is live in this repo and its run contract lists a shared database. One run per repo.`;
+
+test('one run per repo (5-1): while A holds exclusive/, B with no shared service is refused at the end of SCAFFOLD, retry and abandon only', (t) => {
+  const w = world();
+  const [A, B] = bothAtScaffold(w, t);
+  scaffolds(A, SHARED);
+  A.c.take(byKind('spawn', 'spec-writer'));
+  assert.equal(readFileSync(join(exclusiveDirOf(w, A.id), 'run'), 'utf8'), `${A.id}\n`);
+  const scB = scaffolds(B, NO_SERVER);
+  const crd = B.c.take(card('scaffold_failure'));
+  assert.equal(crd.card.reason, refusal(A.id));
+  assert.deepEqual(crd.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon']);
+  assert.equal(stateOf(w, B.id).steps[scB.step_id].state, 'reported', 'not verified');
+  assert.equal(readFileSync(join(exclusiveDirOf(w, A.id), 'run'), 'utf8'), `${A.id}\n`, "still A's");
+  ok(decide(w, 'sa', 'abandon', { cwd: A.c.cwd }));
+  ok(decide(w, 'sb', 'abandon', { cwd: B.c.cwd }));
+});
+
+test('one run per repo (5-1): with B already past SCAFFOLD, shared-service A gives its fresh claim back and is refused naming B', (t) => {
+  const w = world();
+  const [A, B] = bothAtScaffold(w, t);
+  scaffolds(B, NO_SERVER);
+  B.c.take(byKind('spawn', 'spec-writer'));
+  assert.equal(stateOf(w, B.id).phase, 'SPEC_DESIGN');
+  const scA = scaffolds(A, SHARED);
+  const crd = A.c.take(card('scaffold_failure'));
+  assert.equal(crd.card.reason, refusal(B.id));
+  assert.deepEqual(crd.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon']);
+  assert.equal(stateOf(w, A.id).steps[scA.step_id].state, 'reported', 'not verified');
+  const excl = exclusiveDirOf(w, A.id);
+  assert.equal(existsSync(excl), false, 'the fresh claim is released');
+  assert.deepEqual(readdirSync(join(excl, '..')).filter((n) => n.startsWith('exclusive')), []);
+  ok(decide(w, 'sa', 'abandon', { cwd: A.c.cwd }));
+  ok(decide(w, 'sb', 'abandon', { cwd: B.c.cwd }));
+});
+
+test('a stale exclusive claim at SCAFFOLD (5-1): exclusive/run naming a missing run is broken and re-claimed; the scaffolder is verified', (t) => {
+  const w = world();
+  const r = toScaffold(w, 'sa', t);
+  const excl = exclusiveDirOf(w, r.id);
+  mkdirSync(excl);
+  writeFileSync(join(excl, 'run'), 'gone-zzzz\n');
+  const sc = r.c.take(byKind('spawn', 'scaffolder'));
+  ok(r.c.agent(sc, scaffoldOut(contract(r.port, SHARED)), 'ag-scaffold'));
+  assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]);
+  r.c.take(byKind('spawn', 'spec-writer'));
+  assert.equal(stateOf(w, r.id).steps[sc.step_id].state, 'verified');
+  assert.equal(commands(w, r.id).some((e) => e.kind === 'ask_raised'), false, 'no scaffold_failure');
+  assert.equal(readFileSync(join(excl, 'run'), 'utf8'), `${r.id}\n`);
+  assert.deepEqual(readdirSync(join(excl, '..')).filter((n) => n.startsWith('exclusive')), ['exclusive'], 'no exclusive.* left aside');
+  ok(decide(w, 'sa', 'abandon', { cwd: r.c.cwd }));
+});
+
+test('shared service (5-1): A holds the exclusive claim from SCAFFOLD; a start is refused naming A; B, started earlier, gets a scaffold_failure card with retry and abandon only; after A ends, retry claims it', (t) => {
+  const w = world();
+  const [A, B] = bothAtScaffold(w, t);
+  const excl = exclusiveDirOf(w, A.id);
+  // A's SCAFFOLD completes and claims the repo.
+  const scA = A.c.take(byKind('spawn', 'scaffolder'));
+  ok(A.c.agent(scA, scaffoldOut(contract(A.port, SHARED)), 'ag-scaffold-a'));
+  assert.deepEqual(A.c.checks().map((x) => x.passed), [true, true]);
+  A.c.take(byKind('spawn', 'spec-writer'));
+  assert.equal(readFileSync(join(excl, 'run'), 'utf8'), `${A.id}\n`);
+  // A third start: refused before anything is claimed.
+  const p = say(w, 'sc', 'add a sidebar');
+  const refused = run(w, ['start', '--session', 'sc']);
+  fails(refused, 'REFUSED_EXCLUSIVE');
+  const text = `Run refused — ${A.id} is live in this repo and its run contract lists a shared database. One run per repo.`;
+  assert.equal(refused.out.error.message, text);
+  assert.equal(consumed(w, p), null);
+  assert.deepEqual(readdirSync(join(w.home, repoHashOf(w, A.id), 'runs')).sort(), [A.id, B.id].sort());
+  // B reaches the end of SCAFFOLD: the card, its reason the refusal text, no accept.
+  const scB = B.c.take(byKind('spawn', 'scaffolder'));
+  ok(B.c.agent(scB, scaffoldOut(contract(B.port, SHARED)), 'ag-scaffold-b'));
+  assert.deepEqual(B.c.checks().map((x) => x.passed), [true, true]);
+  const crd = B.c.take(card('scaffold_failure'));
+  assert.equal(crd.card.reason, text);
+  assert.deepEqual(crd.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon']);
+  fails(decide(w, 'sb', 'rule E1 accept', { cwd: B.c.cwd }), 'ILLEGAL_TRANSITION');
+  assert.equal(readFileSync(join(excl, 'run'), 'utf8'), `${A.id}\n`, 'still A\'s');
+  // A ends: its port and the claim go with run_abandoned.
+  assert.equal(ok(decide(w, 'sa', 'abandon', { cwd: A.c.cwd })).phase, 'ABANDONED');
+  assert.equal(existsSync(excl), false);
+  assert.equal(existsSync(join(w.home, 'ports', String(A.port))), false);
+  // B's retry: a fresh scaffolder, the same checks, and this time the claim is B's.
+  const rr = ok(decide(w, 'sb', 'rule E1 retry A is gone', { cwd: B.c.cwd }));
+  const scB2 = B.c.take(byKind('spawn', 'scaffolder'));
+  assert.equal(scB2.step_id, rr.reissued);
+  ok(B.c.agent(scB2, scaffoldOut(contract(B.port, SHARED)), 'ag-scaffold-b2'));
+  assert.deepEqual(B.c.checks().map((x) => x.passed), [true, true]);
+  B.c.take(byKind('spawn', 'spec-writer'));
+  assert.equal(stateOf(w, B.id).steps[scB2.step_id].state, 'verified');
+  assert.equal(readFileSync(join(excl, 'run'), 'utf8'), `${B.id}\n`);
+  assert.equal(ok(decide(w, 'sb', 'abandon', { cwd: B.c.cwd })).phase, 'ABANDONED');
+  assert.equal(existsSync(excl), false);
+  for (const id of [A.id, B.id]) assert.deepEqual(stateOf(w, id).rejected, []);
+});
+
+test('record --runs a,b (5-1): one session bound to both runs brings its transcript once, and every file is redacted with the union of both runs\' redact values', () => {
+  const w = world();
+  const a = started(w, 'sa', 'add a footer').id;
+  assert.equal(ok(decide(w, 'sa', 'abandon')).phase, 'ABANDONED');
+  const b = started(w, 'sa', 'add a header').id; // the same session, bound to both runs
+  const [va, vb] = ['alpha-only-secret-1111', 'bravo-only-secret-2222'];
+  writeFileSync(join(runDir(w, a), 'redact.json'), JSON.stringify({ values: [va] }));
+  writeFileSync(join(runDir(w, b), 'redact.json'), JSON.stringify({ values: [vb] }));
+  // Each run's artifact holds the other run's value; the shared transcript holds both.
+  for (const [id, v] of [[a, vb], [b, va]]) {
+    mkdirSync(join(runDir(w, id), 'artifacts', 'steps', 'x'), { recursive: true });
+    writeFileSync(join(runDir(w, id), 'artifacts', 'steps', 'x', 'out.md'), `STATUS: DONE\nsaw ${v}\n`);
+  }
+  appendFileSync(join(w.projects, '-repo', 'sa.jsonl'), JSON.stringify({ type: 'assistant', sessionId: 'sa', message: { content: `first ${va} then ${vb}` } }) + '\n');
+  const rec = ok(run(w, ['record', 'both', '--runs', `${a},${b}`, '--session', 'sa']));
+  assert.deepEqual(rec.runs.map((x: any) => [x.run_id, x.phase]), [[a, 'ABANDONED'], [b, 'ORIENT']]);
+  assert.deepEqual(rec.transcripts, ['sa'], 'the shared transcript, once');
+  const dir = join(w.home, 'recordings', 'both');
+  const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+  assert.deepEqual(manifest.runs, [a, b].map((id) => ({ repo_hash: repoHashOf(w, id), run_id: id })));
+  const all = (readdirSync(dir, { recursive: true }) as string[]).filter((f) => statSync(join(dir, f)).isFile());
+  assert.ok(all.includes(join('transcripts', 'sa.jsonl')) && all.filter((f) => f.endsWith('commands.jsonl')).length === 2, all.join('\n'));
+  for (const f of all) {
+    const text = readFileSync(join(dir, f), 'utf8');
+    assert.ok(!text.includes(va) && !text.includes(vb), `${f} leaks a value`);
+  }
+  assert.match(readFileSync(join(dir, 'transcripts', 'sa.jsonl'), 'utf8'), /first \[REDACTED\] then \[REDACTED\]/);
+  for (const id of [a, b]) assert.match(readFileSync(join(dir, 'runs', repoHashOf(w, id), id, 'artifacts', 'steps', 'x', 'out.md'), 'utf8'), /saw \[REDACTED\]/);
+  ok(decide(w, 'sa', 'abandon'));
 });

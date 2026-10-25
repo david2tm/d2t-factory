@@ -19,13 +19,13 @@ import { lockDir } from '../store/paths.ts';
 import { consumeWithoutCommand } from '../store/sessions.ts';
 import type { Args } from './args.ts';
 import { currentPlan, mergedCheck } from './check.ts';
+import { releaseClaims } from './claims.ts';
 import { appendAll, gate, gateOrThrow, makeEvent } from './commit.ts';
 import { devserverDown } from './devserver.ts';
 import { currentBranch, head, mergeInto, repoHash, repoRoot, sha256, statusDigest } from './git.ts';
 import { consumeWith, embed, newestPrompt, supersede, type Prompt } from './prompt.ts';
 import { isRun, requireSession, resolveRun, type Resolution } from './resolve.ts';
 import { reissueEvent, type Ctx } from './steps.ts';
-import { releasePort } from './worktree.ts';
 
 const REASON: Partial<Record<ErrorCode, string>> = { NOT_FOUND: 'no_run', MISSING_EVIDENCE: 'missing_evidence' };
 
@@ -184,8 +184,10 @@ function build(p: Prompt, c: Ctx, run: LoadedRun, kind: DecisionKind, base: Reco
         const data = { ...base, ...(ask.slice ? { slice_to: evidenceState(state, ask.slice) } : {}) };
         return { data, answers, extra: (d) => [reissueEvent(c, { state, commands: [...run.commands, d] }, subject)] };
       }
-      // accept only over a parsed DONE contract: SPEC must not proceed without a usable one.
-      const acceptable = open && subject.role === 'scaffolder' && subject.output?.status === 'DONE' && !subject.output.failure;
+      // accept only over a parsed DONE contract: SPEC must not proceed without a usable one. And
+      // only when the card offers it: another run's exclusive claim (5-1) cannot be accepted.
+      const acceptable = open && subject.role === 'scaffolder' && subject.output?.status === 'DONE' && !subject.output.failure
+        && (ask.card.commands ?? []).includes(`/factory rule ${esc} accept`);
       if (choice === 'accept' && acceptable) {
         const failing = state.checks.filter((x) => x.seq > subject.issued_seq && x.exit_code !== 0).map((x) => x.id);
         return { data: base, answers, extra: (d) => [makeEvent(c.runId, 'step_verified', { step_id: subject.id, evidence: [...failing, d.id] }, { corr: subject.id })] };
@@ -315,10 +317,11 @@ export async function decide(args: Args): Promise<unknown> {
     const reissued = events.find((x) => x.kind === 'step_reissued');
     return { state: g.state, approved: dec.kind === 'merge_approved' ? String((e.data as { sha?: unknown }).sha) : undefined, out: { decision: dec.kind, run_id: id, phase: g.state.phase, stage: boardStage(g.state), verified, prompt_id: p.prompt_id, ...(reissued ? { reissued: (reissued.data as { new: string }).new } : {}) } };
   });
-  // AD-20: an abandoned run's dev server is killed before its port is released.
+  // AD-20: once run_abandoned is on disk, the dev server is killed, then the port and the
+  // exclusive claim are released.
   if (res.state.phase === 'ABANDONED') {
     await devserverDown(hash, id);
-    releasePort(id, res.state.port);
+    releaseClaims(hash, id, res.state.port);
   }
   if (res.approved) return { ...res.out, ...(await mergeRun(c, res.state, res.approved)) };
   return res.out;

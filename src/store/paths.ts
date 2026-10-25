@@ -54,7 +54,9 @@ export const stepDir = (repoHash: string, runId: string, stepId: string): string
 // Values the CLI must never let into a fact or recording (AD-14); mode 0600, never recorded.
 export const redactFile = (repoHash: string, runId: string): string => join(runDir(repoHash, runId), 'redact.json');
 export const lockDir = (repoHash: string, runId: string): string => join(runDir(repoHash, runId), 'lock');
+// The one-run-per-repo claim (AD-15): `mkdir <repo-hash>/exclusive`, with the owning run id inside.
 export const exclusiveDir = (repoHash: string): string => join(repoDir(repoHash), 'exclusive');
+export const exclusiveOwnerFile = (repoHash: string): string => join(exclusiveDir(repoHash), 'run');
 export const reconFile = (repoHash: string, baseSha: string): string => join(repoDir(repoHash), 'recon', `${baseSha}.md`);
 // One step's files (AD-10): the CLI-written brief and the agent's (or check's) output.
 export const briefFile = (repoHash: string, runId: string, stepId: string): string => join(stepDir(repoHash, runId, stepId), 'brief.md');

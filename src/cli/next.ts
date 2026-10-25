@@ -24,8 +24,9 @@ import { withLock } from '../store/locks.ts';
 import { commandsFile, factsDir, lockDir, outFile, realish, reconFile } from '../store/paths.ts';
 import { flagString, type Args } from './args.ts';
 import { writeBrief, writeIntakeBrief } from './brief.ts';
+import { claimPort, refusedExclusive, releaseClaims, scaffoldConflict } from './claims.ts';
 import { appendAll, gateOrThrow, makeEvent, stepView } from './commit.ts';
-import { devserverDown } from './devserver.ts';
+import { contractOf, devserverDown } from './devserver.ts';
 import {
   currentBranch, diffNames, diffStat, head, isAncestor, mergeInProgress, mergeInto, repoRoot, sha256, statusDigest, trackedClean, worktreeRemove,
 } from './git.ts';
@@ -34,7 +35,7 @@ import { requireHolder, requireRun, requireSession } from './resolve.ts';
 import {
   commitBuilder, evidenceFor, isAgent, raise, readOutput, redactCard, reissueOrEscalate, reportEvents, scaffoldCopy, verifiedEvent, type Ctx,
 } from './steps.ts';
-import { claimPort, inWorktree, prepareWorktree, releasePort } from './worktree.ts';
+import { inWorktree, prepareWorktree } from './worktree.ts';
 
 interface NextOut { steps?: Record<string, unknown>[]; in_flight?: string[]; wait?: { retry_after_ms: number }; done?: true; [k: string]: unknown }
 interface Prepared { events: AnyEvent[]; report?: Record<string, unknown> }
@@ -185,8 +186,11 @@ function startScaffold(c: Ctx, state: RunState): AnyEvent[] {
   return [makeEvent(c.runId, 'stage_started', { stage: 'SCAFFOLD', port, worktree }, { corr: state.run_id! })];
 }
 
-// SCAFFOLD done: both checks verified → the inline git checks, then step_verified or the
-// scaffold_failure card naming every failing check.
+// SCAFFOLD done: both checks verified → the inline git checks and one run per repo (AD-15: another
+// live run holding exclusive/ blocks any run; a run whose contract lists a shared service claims
+// it, and is blocked by a live run already past SCAFFOLD); then step_verified or the
+// scaffold_failure card naming every failure. A blocked run can only retry (once the other run
+// ends) or abandon: no accept.
 function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
   const { state } = run;
   const steps = (['contract.health', 'contract.test'] as const).map((k) => latestCheckStep(state, k, sc.issued_seq));
@@ -195,14 +199,18 @@ function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
   const t0 = Date.now();
   const clean = gitCheck(c, state, 'git.worktree_clean', trackedClean(state.worktree!), { command: 'git status --porcelain=v2 --untracked-files=no' }, t0);
   const base = baselineCheck(c, state);
+  const services = contractOf(state)?.services;
+  const shared = Array.isArray(services) && services.some((x) => (x as { shared?: unknown }).shared === true);
+  const conflict = scaffoldConflict(c.hash, c.runId, shared);
   const failures = [
     ...checks.map((x, i) => (x && x.exit_code === 0 ? null : `${steps[i]!.check} failed${x ? ` (exit ${x.exit_code})` : ''}`)),
     (clean.data as { exit_code: number }).exit_code === 0 ? null : 'tracked files changed in the worktree',
     base.pass ? null : 'the main checkout differs from its baseline',
+    conflict ? refusedExclusive(conflict) : null,
   ].filter((x): x is string => Boolean(x));
   const events = [clean, base.event];
   if (failures.length) {
-    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: true })));
+    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict })));
   } else {
     const out = readOutput(state, sc);
     const ev = evidenceFor(run, sc, out);
@@ -306,13 +314,13 @@ function wrapEvents(c: Ctx, run: LoadedRun, ctx: ScheduleCtx): AnyEvent[] {
 }
 
 // After `merged`, from outside the worktree: stop the dev server, remove the worktree (a failure is
-// reported, never fatal), release the port, then run_completed. The recording follows the append.
+// reported, never fatal), then run_completed. The claims are released by `advance` once that append
+// has made the fold terminal (AD-20); the recording follows it.
 async function housekeeping(c: Ctx, run: LoadedRun, ctx: ScheduleCtx): Promise<Prepared> {
   const { state } = run;
   if (ctx.in_worktree || openSteps(state).length) return { events: [] };
   const server = await devserverDown(c.hash, c.runId);
   const rm = state.worktree ? worktreeRemove(c.root, state.worktree) : { ok: true as const };
-  releasePort(c.runId, state.port);
   const report = { devserver_stopped: server.stopped, worktree_removed: rm.ok, ...(rm.ok ? {} : { worktree_error: rm.error }), port_released: state.port ?? null };
   return { events: [makeEvent(c.runId, 'run_completed', {}, { corr: state.run_id! })], report };
 }
@@ -437,12 +445,22 @@ function recordRun(c: Ctx): Record<string, unknown> {
   }
 }
 
+// A terminal run (run_completed or run_abandoned on disk) gives up its claims: the dev server is
+// killed first, then the port and the exclusive claim are released (AD-20). Idempotent.
+async function releaseTerminal(hash: string, runId: string, state: RunState): Promise<void> {
+  await devserverDown(hash, runId);
+  releaseClaims(hash, runId, state.port);
+}
+
 export async function advance(hash: string, runId: string, session: string, cwd: string): Promise<NextOut> {
   const c: Ctx = { hash, runId, session, root: repoRoot(cwd) };
   let report: Record<string, unknown> = {};
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const run = loadRun(hash, runId);
-    if (isTerminal(run.state)) return { done: true, ...report };
+    if (isTerminal(run.state)) {
+      await releaseTerminal(hash, runId, run.state);
+      return { done: true, ...report };
+    }
     // A non-holder's first round only takes the lock (which adopts a /clear rebind or refuses).
     const holder = run.state.holder === session && round < MAX_ROUNDS - 1;
     const ctx = probe(run, c, cwd, holder);
@@ -462,6 +480,7 @@ export async function advance(hash: string, runId: string, session: string, cwd:
     });
     if (r.appended && prep.report) report = { ...report, ...prep.report };
     if (r.appended && events.some((e) => e.kind === 'run_completed')) report = { ...report, ...recordRun(c) };
+    if (r.out?.done) await releaseTerminal(hash, runId, loadRun(hash, runId).state); // ended meanwhile
     if (r.out) return { ...r.out, ...report };
   }
   throw new FactoryError('LOCKED', `run ${runId} kept changing; try factory next again`);
