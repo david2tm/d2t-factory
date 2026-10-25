@@ -4,10 +4,10 @@ One pipeline; forks only at orientation. Flow diagram: `architecture-diagrams.md
 
 | Stage | Where | Does | Emits | Gate |
 |---|---|---|---|---|
-| INTAKE | main checkout, read-only | Conversational brainstorm with human; records the exercise's stated time limit (and its start, if earlier than the run's) and slice time box (default 30 min); may mark task UI-free; may override reviewer tags | Intake notes | Human confirms (`/factory approve intake`) |
+| INTAKE | main checkout, read-only | Conversational brainstorm with human; records an optional time limit (and when its clock started, if earlier than the run) and slice time box (default 30 min); may mark task UI-free; may override reviewer tags | Intake notes | Human confirms (`/factory approve intake`) |
 | FRAME (greenfield) | main checkout | Chooses stack + UI kit | Context artifact (incl. UI surface yes/no) | — |
 | RECON (brownfield) | main checkout, read-only | Maps unseen repo; map reused by later runs on the same base commit | Context artifact (same shape as FRAME) | — |
-| SCAFFOLD | worktree (outside repo) | Greenfield: create project + own test runner. Brownfield: install nothing; verify install/start/tests | Run contract | SCAFFOLD-failure ask |
+| SCAFFOLD | worktree (outside repo) | Greenfield: create project + own test runner. Brownfield: the factory runs the contract's install; verify install/start/tests. On a failed check: one repair round (contract commands only), then the SCAFFOLD-failure ask | Run contract | SCAFFOLD-failure ask |
 | SPEC ∥ DESIGN | worktree | Spec (one screen) and `design.md` in parallel; designer runs if app has a UI surface and task not marked UI-free | `spec.md`, `design.md` | **Gate 1** (spec + design) |
 | SLICE PLAN | worktree | Slices with reviewer tags and independent/dependent mark | Slice plan | **Gate 2** |
 | BUILD LOOP | worktree | Per slice: builder ⇄ reviewers; pipelined for independent slices, serial for dependent | Code + verdict files | Escalations only |
@@ -17,7 +17,7 @@ Greenfield: `/factory` in a non-git directory runs `git init` plus an empty init
 
 Factory artifacts (intake notes, context artifact, run contract, `spec.md`, `design.md`, slice plan, agent outputs) live under `~/.factory/<repo-hash>/runs/<run-id>/`, never in the worktree. Nothing factory-owned is merged into the target.
 
-Budget clock: runs from run start (or the earlier exercise start entered at INTAKE) and never pauses. At stated limit − 40 min (2:00 → 1:20; 1:30 → 0:50) the conductor proposes cutting remaining slices — a live human gate, never pre-planned away.
+Budget clock: only when INTAKE set a time limit; without one there is no clock, no cut, and the board shows elapsed time. It runs from run start (or the earlier start entered at INTAKE with the limit) and never pauses. At stated limit − 40 min (2:00 → 1:20; 1:30 → 0:50) the conductor proposes cutting remaining slices — a live human gate, never pre-planned away.
 
 ## Run contract
 

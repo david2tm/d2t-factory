@@ -28,14 +28,14 @@ Vision plus opportunity. d2t faces 1.5–2h interview exercises — add a featur
   - **intent:** Human starts a run with `/factory [task]`, resumes from disk with bare `/factory` or `/factory resume <run-id>`, re-runs a stage with `/factory rerun <stage>`, and sends work back with `/factory rework <target> <note>`.
   - **success:** After `/clear` mid-BUILD LOOP, `/factory` resumes at the same stage and slice without redoing completed work; inside a worktree it resumes that worktree's run; in the main checkout with several live runs it lists them and asks; with no live run it starts INTAKE.
 - **CAP-2**
-  - **intent:** Run opens with a conversational brainstorm (INTAKE) with the human before any spec is written; the human enters the exercise's stated time limit and may set the slice time box, may mark the task UI-free, and may override reviewer selection.
-  - **success:** No spec file exists until the human confirms intake; slice box defaults to 30 min when not given; a reviewer override is reflected in every affected slice's roster.
+  - **intent:** Run opens with a conversational brainstorm (INTAKE) with the human before any spec is written; the human may set a time limit for the run and may set the slice time box, may mark the task UI-free, and may override reviewer selection.
+  - **success:** No spec file exists until the human confirms intake on a card showing the agreed task and scope; slice box defaults to 30 min when not given; no time limit when none is given; a reviewer override is reflected in every affected slice's roster.
 - **CAP-3**
   - **intent:** Factory orients itself — RECON maps an unseen repo (brownfield), FRAME chooses stack and UI kit (greenfield) — and both emit the same context artifact, including whether the app has a UI surface.
   - **success:** Every stage after orientation runs unchanged on a brownfield and a greenfield run; a RECON map is reusable by a second run on the same repo.
 - **CAP-4**
   - **intent:** SCAFFOLD produces a run contract (install, start, URL/port, test command, health check, stateful services) and proves the project runs before any spec work.
-  - **success:** Brownfield: no tracked file in the target repo changes and the health check passes, or the human is paged before any code is written. Greenfield: project, test runner, and initial commit exist and the health check passes.
+  - **success:** Brownfield: no tracked file in the target repo changes and the health check passes, or — after at most one factory repair round that changes only the run contract's commands — the human is paged before any code is written. Greenfield: project, test runner, and initial commit exist and the health check passes.
 - **CAP-5**
   - **intent:** Factory writes a spec that fits one screen, with every acceptance criterion carrying a command or page check and an Assumptions section the human checks for product decisions; human approves at gate 1.
   - **success:** Every acceptance criterion has an executable check; spec renders in one screen; BUILD cannot start without a recorded gate-1 pass.
@@ -55,8 +55,8 @@ Vision plus opportunity. d2t faces 1.5–2h interview exercises — add a featur
   - **intent:** Human is interrupted only by the asks listed in `review-policy.md` — planned gates, the four escalation conditions, SCAFFOLD failure, the designer's one question, and resume selection; everything else resolves among agents.
   - **success:** In a dry run, every human prompt maps to exactly one ask type in `review-policy.md`; lost liveness shows on the dashboard only, never as a chat prompt.
 - **CAP-11**
-  - **intent:** A budget clock, running from run start and never pausing, makes the conductor propose cutting remaining slices at the stated time limit − 40 min, as a live human gate.
-  - **success:** A run with a 2:00 limit reaching 1:20 (or a 1:30 limit reaching 0:50) with unbuilt slices raises the cut proposal; the human's choice is recorded.
+  - **intent:** When INTAKE set a time limit, a budget clock, running from run start and never pausing, makes the conductor propose cutting remaining slices at the limit − 40 min, as a live human gate. Without a limit there is no budget clock and no cut gate; the board shows elapsed time.
+  - **success:** A run with a 2:00 limit reaching 1:20 (or a 1:30 limit reaching 0:50) with unbuilt slices raises the cut proposal; the human's choice is recorded; a run with no time limit never raises a cut and its lane shows elapsed time.
 - **CAP-12**
   - **intent:** Each run works in its own git worktree outside the repo's working tree, with its own id, branch (`factory/<run-id>`), and port, so multiple runs work in one repo without collision.
   - **success:** Two concurrent runs in one repo finish on distinct branches and ports with no cross-run interference and no new entry in `git status` of the main checkout; a second claim on the same run id fails; a second concurrent run is refused when the run contract lists a shared mutable database.
@@ -65,17 +65,17 @@ Vision plus opportunity. d2t faces 1.5–2h interview exercises — add a featur
   - **success:** No merge occurs without a recorded human OK; a conflicted merge presents the resolutions plus passing tests and reviewer-code verdict before the OK request.
 - **CAP-14**
   - **intent:** Run state is recorded from hook-observed facts plus a state machine that owns stage semantics, so the record cannot be advanced by the LLM's say-so; human decisions count only when the human typed them as `/factory` commands.
-  - **success:** An illegal transition is rejected; a gate pass without its evidence, or without a matching human-typed `/factory` command, is rejected; the conductor cannot end a turn while its run is working (it may stop when awaiting the human, waiting on background work, or terminal); events from unregistered sessions are dropped.
+  - **success:** An illegal transition is rejected; a gate pass without its evidence, or without a matching human-typed `/factory` command, is rejected; the conductor cannot end a turn while its run is working (it may stop when awaiting the human, waiting on background work, or terminal, or when the human rejected a tool call in that turn, read from the session's own transcript; a human interrupt ends the turn without Stop firing); a stop let through at the factory's block cap is recorded and shown on the dashboard; events from unregistered sessions are dropped.
 - **CAP-15**
-  - **intent:** A local web dashboard shows all runs as lanes — stage, current slice, reviewer verdicts, escalation queue — marking each item claimed vs verified and foregrounding human decisions.
-  - **success:** A claim with no matching hook fact displays as unverified; gates, escalations, and cuts appear as first-class human-attributed events; dashboard updates live without reload.
+  - **intent:** A local web dashboard shows all runs as lanes — stage, current slice, reviewer verdicts, escalation queue — marking each item claimed vs verified and foregrounding human decisions, and lets the human read, read-only, each artifact a gate pins, and copy its path.
+  - **success:** A claim whose hook facts never arrived displays as unverified; one waiting on a human decision or on checks displays as claimed with what it waits on; gates, escalations, and cuts appear as first-class human-attributed events; dashboard updates live without reload.
 - **CAP-16**
   - **intent:** A recorded real session — single-run first, multi-run once parallel runs exist — can be replayed in the dashboard.
   - **success:** Replay of a recorded run reproduces its lanes and human decisions; replay of a recorded multi-run session shows concurrent lanes; replayed transcripts contain no secrets.
 
 ## Constraints
 
-- Brief → working, human-approved result within the exercise's stated time limit with explainable gates; time-box beats polish.
+- Brief → working, human-approved result within the time limit when one is set, with explainable gates; time-box beats polish.
 - Ships as a standalone Claude Code plugin installed user-level; target projects have no BMad.
 - Nothing lands in the target project's working tree: factory tooling ships with the plugin (MCP/npx), the repo's own e2e tooling is preferred when present, factory state, run artifacts, and worktrees live under `~/.factory/<repo-hash>/`; the worktree holds product code only.
 - Factory hooks never alter non-factory sessions.

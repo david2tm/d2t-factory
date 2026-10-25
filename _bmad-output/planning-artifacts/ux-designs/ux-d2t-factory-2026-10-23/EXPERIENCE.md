@@ -1,7 +1,7 @@
 ---
 name: d2t-factory dashboard
 status: final
-updated: 2026-10-23
+updated: 2026-10-25
 sources:
   - ../../../specs/spec-poc-factory-plugin/SPEC.md
   - ../../../specs/spec-poc-factory-plugin/pipeline-stages.md
@@ -81,7 +81,7 @@ design: DESIGN.md
 |---|---|---|---|
 | INTAKE | Stage card `INTAKE` | In Progress (Master d2t attached) → Done | Seal `intake confirmed · Master d2t`; timeline pip. No Needs You card — d2t is already in the conversation. Slice time box set here (default 30 min, CAP-2). |
 | RECON / FRAME | Stage card `RECON` or `FRAME` | In Progress → Done | None. No sprite on the card; the conductor in the Swimlane header owns this stage. Origin tag `brownfield` or `greenfield` (CAP-3). |
-| SCAFFOLD | Stage card `SCAFFOLD` | In Progress → Done | On failure the card moves to Needs You tagged `ESCALATION`, reason label `Scaffold failed:` (CAP-4; see Open items). |
+| SCAFFOLD | Stage card `SCAFFOLD` | In Progress → Done | On failure, after the factory's one repair round, the card moves to Needs You tagged `ESCALATION`, reason label `Scaffold failed:` (CAP-4; see Open items). |
 | SPEC ∥ DESIGN | Stage cards `SPEC` and `DESIGN` (DESIGN omitted when the app has no UI surface or INTAKE marked the task UI-free) | Both In Progress in parallel (Sela Venn on DESIGN) → merge into one Needs You card (GATE) `Gate 1 — Spec + Design ready` → both to Done | Seal `Gate 1 · approved by Master d2t` on each (CAP-5, CAP-6). Sela Venn stands by beside the Needs You card (GATE). Not approved → rework (Cross-stage events). |
 | SLICE PLAN | Stage card `SLICE PLAN` | In Progress → Needs You card (GATE, Gate 2) → Done | Seal `Gate 2 · approved by Master d2t` (CAP-7). On approval slice cards are dealt into Backlog. Not approved → rework (Cross-stage events). |
 | BUILD LOOP (board label `BUILD`) | Slice cards `S1…Sn` | Backlog → In Progress (Brix, Time box meter) → In Review (roster, Verdict list) → Done (`VERIFIED`) | Findings send the card back to In Progress; meta shows `round n/2` (max 2, CAP-8). An escalation moves the slice card itself into Needs You tagged `ESCALATION` with its reason label; d2t's ruling seals the slice `escalation ruled · Master d2t`. Independent slices pipeline: S*n* in review while S*n+1* is in progress. |
@@ -92,7 +92,7 @@ design: DESIGN.md
 | Event | Card(s) | Path on board | Human decision |
 |---|---|---|---|
 | Pipelined findings (CAP-8) | Slice card S*n* | Stays in In Review marked `findings queued` while Brix finishes S*n+1*'s implementation → In Progress (fix) → In Review, where only the reviewer who raised the finding re-checks → then S*n+1* goes to review | A bounce past `round 2/2` escalates as `Non-convergence:`. |
-| Budget clock (limit − 40m) | Needs You card (CUT) | Appears in Needs You; remaining Backlog cards get the AT RISK edge | d2t's cut choice is sealed (CAP-11). Cut slices move to Done as **cut** (seal `cut · Master d2t`, no Claim chip); kept slices lose AT RISK and stay in Backlog. |
+| Budget clock (limit − 40m; only with a time limit) | Needs You card (CUT) | Appears in Needs You; remaining Backlog cards get the AT RISK edge | d2t's cut choice is sealed (CAP-11). Cut slices move to Done as **cut** (seal `cut · Master d2t`, no Claim chip); kept slices lose AT RISK and stay in Backlog. |
 | `/factory rework <note>` — rejected gate | Needs You card (GATE) + the stage card(s) sent back | Needs You card (GATE) leaves Needs You; SPEC and/or DESIGN (Gate 1) or SLICE PLAN (Gate 2) return to In Progress; the gate diamond reverts to hollow | Seal `rework · Master d2t` on each card sent back + timeline pip. The gate is re-raised as a new Needs You card (GATE) when the stage finishes. Flow 4. |
 | `/factory rework <note>` — slice | The slice card | Returns to In Progress, then In Review with its full roster | Seal `rework · Master d2t`. A human rework is not a findings round: `round n/2` does not advance. |
 
@@ -142,7 +142,7 @@ Every `ESCALATION` card's REASON block starts with exactly one bold label from t
 | `/factory resume <run-id>` | Explicit resume. This is the command on every Needs You card. |
 | `/factory rework <note>` | Sends work back; see the two rework events in Cross-stage events. Not approving a gate is a rework. |
 | Second run refused (CAP-12) | Printed in chat; no swimlane appears: `Run refused — r-7f3a is live in this repo and its run contract lists a shared database. One run per repo.` A second claim on a live run id: `Run r-7f3a is already claimed by another session.` |
-| Gate / escalation message | Carries the **same title, type tag, reason label, and command** as its dashboard card. Shape (lines separated by /): `[GATE] Gate 1 — Spec + Design ready` / reason or checks / `/factory resume r-2c91`. |
+| Gate / escalation message | Carries the **same title, type tag, reason label, and command** as its dashboard card. Shape (lines separated by /): `[GATE] Gate 1 — Spec + Design ready` / reason / details / `To continue, type one of:` / one `<command> — <then>` line per option / the reply line (what a chat reply does at this card; AD-34). |
 | Resume list | One row per live run: run id · title · stage · slice · last activity (`pipeline-stages.md`). Same vocabulary as the Swimlane header (`r-7f3a · Add CSV export to Orders page · BUILD · S3 · 2m ago`). |
 
 ## Voice and Tone
@@ -158,6 +158,7 @@ Microcopy. Brand posture lives in `DESIGN.md`. Terse, precise, spec vocabulary v
 | `No heartbeat from the builder for 4m (3 missed).` | "Something went wrong" |
 | `A hook fact matched Brix's claim.` | "Verified by AI ✓" |
 | `Gate 2 · approved by Master d2t` | "Approved" (unattributed) |
+| `time limit 2:00`, `no time limit` | "exercise", "interview", or any wording that implies who the run is for |
 | `Slices are dealt here once the slice plan clears Gate 2.` | "Nothing here yet!" |
 | `Master d2t · you`, `standing by`, `SIGNAL LOST` — flavor on top of meaning | In-world-only phrasing that hides meaning ("The Council awaits") |
 | Name + role label together: `Brix` / `builder` | A character name without its role |
@@ -183,21 +184,21 @@ Behavioral. Visual specs live in `DESIGN.md` Components (same names).
 | Column header | Board top | Counts sum all lanes; update live. Sticky on vertical scroll. |
 | Needs You column | Board | Gold tint spans all lanes. Master d2t's sprite looks up when a Needs You card enters, and periodically while idle. |
 | Swimlane header | Each run | Shows run id, title, origin tag (`brownfield`/`greenfield`, always shown), current stage (gold when waiting on d2t), Budget clock, Stage track. |
-| Budget clock | Swimlane header | Counts down from the stated limit; bar drains leftward; cut marker fixed at limit − 40m (CAP-11). Past 0:00 shows `+m:ss over` in `{colors.amber}`. |
+| Budget clock | Swimlane header | With a time limit: counts down from it; bar drains leftward; cut marker fixed at limit − 40m (CAP-11). Past 0:00 shows `+m:ss over` in `{colors.amber}`. Without one: `ELAPSED m:ss · no limit`, counting up; no bar, no cut marker. |
 | Stage track | Swimlane header | One step per pipeline stage + gate diamonds. Waiting gate reads `GATE n · NEEDS YOU`; a gate sent back by rework reverts to hollow. Not interactive. |
 | Stage card | Cells | One per stage; moves columns per Stage lifecycle. Seals accumulate on it. |
 | Slice card | Cells | Moves Backlog → In Progress → In Review → Done; back to In Progress on findings (meta `round n/2`); to Needs You on escalation. Pipelined findings: waits in In Review marked `findings queued` (Cross-stage events). Live spine lights while an agent works it. |
 | Time box meter | Slice card (In Progress) | Elapsed / slice time box (set at INTAKE). Exceeding the time box is escalation condition 3: the card moves to Needs You with `Over time box:`. |
 | Verdict list | Slice card (In Review) | One row per rostered reviewer; each verdict carries its own Claim chip. Verdict word rules below. Card movement follows the state machine, never the word. |
-| Claim chip | Slice cards, verdict rows, Evidence drawer (Decision) evidence rows | Any agent claim renders CLAIMED until a hook fact or evidence check confirms it (→ VERIFIED) or it is overdue (→ UNVERIFIED). Clicking opens the Evidence drawer (Claim). Needs You card (GATE) checks are plain text for d2t to check, not chips. |
+| Claim chip | Slice cards, verdict rows, Evidence drawer (Decision) evidence rows | Any agent claim renders CLAIMED until a hook fact or evidence check confirms it (→ VERIFIED) or it is overdue while waiting only on hook facts (→ UNVERIFIED). While it waits on d2t or on checks it stays CLAIMED with a gloss (Claim truth). Clicking opens the Evidence drawer (Claim). Needs You card (GATE) checks are plain text for d2t to check, not chips. |
 | Decision seal | Any card a human decision touched | Created on every gate, cut, merge, rework, escalation ruling, intake confirm. Never removed or hidden; when its card collapses into the Done deck, the seal moves to the deck's seal row. Clicking opens the Evidence drawer (Decision). |
 | Needs You card | Needs You column | Enters with beacon; leaves when the state machine records the decision; a seal stays on the affected card. |
 | Type tag | Needs You card | One of `GATE`, `ESCALATION`, `CUT`, `MERGE`, `SIGNAL LOST`. |
-| Action slot | Needs You card | Shows the exact command + Copy button. Reserved footprint for a future action button. No other control. |
+| Action slot | Needs You card | Shows each command + Copy button, with its `then` line below it, and the card's reply line once at the bottom. Reserved footprint for a future action button. No other control. |
 | Agent sprite | Cells, headers | Each agent is at one card at a time; several agents may share a card (review cluster). Idle agents stand by beside the relevant card. Lost agents dissolve to static. Decorative; name + role are text. |
 | Done stack | Done cells | **Canonical rule.** Newest first; beyond 5 items, the 4 newest stay visible and the rest collapse into a `+N` deck naming them. The deck carries a seal row: one gold glyph per seal on its collapsed cards, each a focusable button that opens the Evidence drawer (Decision); its accessible name is the seal line. While a glyph's drawer is open, that glyph is the selected source (gold outline) and the deck carries `EVIDENCE ▸`. The deck itself is not expandable in the POC; no seal is ever unreachable. → mock: `mockups/key-wrap.html` States 01. |
 | Empty cell | Any cell with a pending reason | Shows why it's empty and what fills it (`AWAITING GATE 1`). Idle cells with no pending reason stay blank. |
-| Evidence drawer | Right dock | Two variants (table below). Source card gets outline + `EVIDENCE ▸`. One at a time; clicking another chip or seal swaps content. Close via `×` or `Esc`, in both modes. → mock: `mockups/key-wrap.html` drawer (Gate 2) and States 03 (escalation). |
+| Evidence drawer | Right dock | Three variants (table below). Source card gets outline + `EVIDENCE ▸`. One at a time; clicking another chip or seal swaps content. Close via `×` or `Esc`, in both modes. → mock: `mockups/key-wrap.html` drawer (Gate 2) and States 03 (escalation). |
 | Replay bar | Replay mode | Play/pause, speed, prev/next decision, timeline. Board state always equals the event log at the playhead. |
 | Starfield | Backdrop | Ambient only; stops under reduced motion. |
 
@@ -205,7 +206,8 @@ Behavioral. Visual specs live in `DESIGN.md` Components (same names).
 
 | Variant | Opened from | Title | Rows | Chain |
 |---|---|---|---|---|
-| Claim | Claim chip | `DESIGN.md` Evidence drawer | Proof table; for a CLAIMED or UNVERIFIED claim it reads `none yet` (CLAIMED) or `no hook fact` (UNVERIFIED) | Claim → proof chain; for CLAIMED or UNVERIFIED it stops at the cyan node |
+| Claim | Claim chip | `DESIGN.md` Evidence drawer | Proof table; for a CLAIMED or UNVERIFIED claim it reads `none yet` (CLAIMED), `waiting on Master d2t — <card title>` or `waiting on <checks>` (CLAIMED and waiting), or `no hook fact` (UNVERIFIED) | Claim → proof chain; for CLAIMED or UNVERIFIED it stops at the cyan node |
+| Artifact | A Gate card's file row, the intake seal, or a Decision drawer evidence row | `Artifact · <name> · <run-id>` | path + Copy path · sha256 · `pinned by <seal line>` or `not yet approved` · body (monospace, read-only; the redacted bytes from event data, never a file read) | None |
 | Decision | Decision seal or deck seal glyph | `Decision · <Event> · <run-id>` | event (the state-machine event name; see Open items) · reason (ESCALATION decisions only: reason label + line, verbatim from the card) · decided by · at · terminal response · run / stage · evidence checked | None |
 
 **Verdict words.** The first line of each verdict file is `VERDICT`, `STATUS`, or `APPROVE|ESCALATE` (`pipeline-stages.md` Agent protocol). Colors in `DESIGN.md` Verdict list.
@@ -223,9 +225,9 @@ Behavioral. Visual specs live in `DESIGN.md` Components (same names).
 
 | State | Surface | Treatment |
 |---|---|---|
-| CLAIMED | Claim chip | Agent reported it; no hook fact or evidence check yet. Cyan hologram, flicker, text `CLAIMED`. |
+| CLAIMED | Claim chip | Agent reported it; no hook fact or evidence check yet. Cyan hologram, flicker, text `CLAIMED`. Gloss `· awaiting Master d2t` while a human decision is pending on it, `· checks running` while its checks run; neither ever turns UNVERIFIED. |
 | VERIFIED | Claim chip | A hook fact or evidence check confirmed it (`truth-layer.md`). One-time scan-line sweep, then a solid gold VERIFIED chip, text `VERIFIED` + gloss. |
-| UNVERIFIED | Claim chip | Claim overdue with no hook fact (CAP-15). Red-orange flicker, `UNVERIFIED · no hook fact`. "Overdue" window: 30s after the claim, to be tuned at the dry run (Open items). |
+| UNVERIFIED | Claim chip | Claimed, waiting on nothing but hook facts, and overdue with none (CAP-15). Red-orange flicker, `UNVERIFIED · no hook fact`. "Overdue" window: 30s after the claim, to be tuned at the dry run (Open items). |
 
 ### Lanes and runs
 
@@ -233,6 +235,7 @@ Behavioral. Visual specs live in `DESIGN.md` Components (same names).
 |---|---|---|
 | SIGNAL LOST | Slice/stage card + Needs You | Sprite dissolves to static; card shows the SIGNAL LOST variant (`SIGNAL LOST · last seen 4m ago`); a `SIGNAL LOST` card (`Run lost contact`) appears in Needs You with `/factory resume <run-id>`. Threshold: 3 missed heartbeats, to be tuned at the dry run. Clears when heartbeats resume. Dashboard-only notice: never pages d2t in chat, so CAP-10's interrupt list stays intact. |
 | Run abandoned | Swimlane | A run that never resumes keeps its SIGNAL LOST card and card variant; `last seen` keeps counting (`last seen 2d ago`). No auto-removal or archive in the POC (Future). |
+| PAUSED | Swimlane header | `PAUSED · you rejected a tool call 15:24` (`stop_yielded`) or `PAUSED · the conductor stopped after 3 blocks 15:24` (`stop_forced`), in `text-2` beside the stage; clears on the run's next command. Dashboard-only, never a chat prompt (CAP-10). |
 | Run complete | Swimlane | Lane stays, all cards in Done, stage track fully lit with MERGE diamond solid; no auto-removal in the POC. |
 | Findings queued | In Review | Slice card shows `findings queued` until its builder is free; meta shows `round n/2`. |
 | Reviewer not rostered yet | In Review cell | Agent stands alone, label `standing by` (mock: Kael Nox). |
@@ -245,6 +248,7 @@ Behavioral. Visual specs live in `DESIGN.md` Components (same names).
 | Gate waiting | Stage track + Swimlane header + Needs You | Track shows `GATE n · NEEDS YOU`; header stage reads `GATE n` in gold; Needs You card (GATE). |
 | Gate sent back | Stage track + cells | Rework of a rejected gate (Cross-stage events): Needs You card (GATE) gone, stage card(s) back in In Progress with `rework · Master d2t`, gate diamond hollow, header stage shows the reworked stage. |
 | Budget running | Budget clock | Holo bar drains leftward toward the gold cut marker. |
+| No time limit | Budget clock slot | `ELAPSED 0:47 · no limit`, counting up; no bar, no cut marker; no CUT card is ever raised. |
 | Cut point reached | Needs You + Backlog | Needs You card (CUT) `Cut point reached — N slices unbuilt. Cut S5, S6?`; every remaining Backlog card shows the AT RISK variant (`AT RISK · cut candidate`). |
 | Slice cut | Done | Cut variant: `CUT` tag, seal `cut · Master d2t`, no Claim chip. |
 | Merge waiting | Needs You + Swimlane header + Stage track | Needs You card (MERGE) titled `Merge ready — <run title>`; body shows `<branch> → main`, then the re-verified tests and Tarvus's reviewer-code verdict (each VERIFIED). The lane header reads `STAGE MERGE`; the track shows `MERGE · NEEDS YOU` with WRAP done. → mock: `mockups/key-wrap.html`. |
@@ -278,7 +282,7 @@ Behavioral. Visual specs live in `DESIGN.md` Components (same names).
 
 ## Interaction Primitives
 
-- **Read-only.** No control changes run state (SPEC Non-goals). The only actions: copy a command, open or close evidence, use the replay controls, toggle reduced motion, and follow the `Open the live board` link.
+- **Read-only.** No control changes run state (SPEC Non-goals). The only actions: copy a command or an artifact path, open or close evidence (including an artifact view), use the replay controls, toggle reduced motion, and follow the `Open the live board` link.
 - **Copy command** — clicking Copy in an Action slot copies the command text exactly (no `$ `). Success: glyph swaps to a check for 1.5s and `Copied` is announced. Failure: see Copy failed (State Patterns).
 - **Evidence drawer** — click any Claim chip, Decision seal or deck seal glyph to open; `×` closes; focus moves into the drawer on open and returns to the source on close.
 - **Replay controls** — play/pause; speed `1×` / `4×` / `16×` (radio group); `prev decision` / `next decision` jump the playhead to the previous/next gold pip (human decision) and pause there; timeline shows played portion, pips, playhead. Click/drag on the timeline seeks.
@@ -400,7 +404,7 @@ Failure: Gate 2 sent back → the same path with SLICE PLAN. A slice sent back �
 | SCAFFOLD failure pages the human (CAP-4, `pipeline-stages.md` "Page on failure"), but CAP-10 allows interrupts only at planned gates and the four escalation conditions. The board shows it as `ESCALATION` / `Scaffold failed:`. Spec fix: add SCAFFOLD failure to CAP-10's list, or name it a planned gate. | Spec | Open |
 | Verdict first-line vocabulary (`VERDICT`, `STATUS`, `APPROVE\|ESCALATE`) doesn't say which agent writes which form. The Verdict list renders the word verbatim meanwhile. | Spec | Open |
 | Heartbeat interval and SIGNAL LOST threshold; the `4m (3 missed)` copy is illustrative. | Architecture | To be tuned at the dry run |
-| Claim overdue window (CLAIMED → UNVERIFIED): 30s after the claim. | Architecture | To be tuned at the dry run |
+| Claim overdue window (CLAIMED → UNVERIFIED): 30s after the claim. | Architecture | Kept at 30s; applies only to claims waiting on hook facts (dry run 1, AD-7) |
 | Motion coalescing window: 250ms. | UX | To be tuned at the dry run |
 | `aria-live` announcement coalescing window: 1s. | UX | To be tuned at the dry run |
 | Dashboard port (avoid 4317, the OpenTelemetry default). | Architecture | Open |

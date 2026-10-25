@@ -4,7 +4,7 @@ Data-flow diagram: `architecture-diagrams.md`.
 
 ## Principle
 
-Facts come from instrumentation; meaning comes from a state machine; the LLM conductor's self-report is never trusted alone. The dashboard shows each item as **claimed** (conductor said so) vs **verified** (hook fact or evidence check confirms it).
+Facts come from instrumentation; meaning comes from a state machine; the LLM conductor's self-report is never trusted alone. The dashboard shows each item as **claimed** (conductor said so) vs **verified** (hook fact or evidence check confirms it). A claim waiting on a human decision or on the CLI's checks is shown as claimed, with what it waits on; only a claim whose hook facts never arrived is unverified.
 
 ## Facts — async plugin hooks
 
@@ -18,7 +18,7 @@ Facts come from instrumentation; meaning comes from a state machine; the LLM con
 - A gate pass verifies its evidence before being accepted.
 - Human decisions are accepted only with a hook-observed, human-typed `/factory` command; an LLM-asserted approval is rejected.
 - Test, health, and scaffold claims are verified only by the CLI re-running the run-contract check; hook-observed test runs are supporting facts.
-- Stop hook blocks the conductor from ending a turn while its run is working; stopping is allowed when every open step awaits the human or runs in the background, or the run is terminal.
+- Stop hook blocks the conductor from ending a turn while its run is working; stopping is allowed when every open step awaits the human or runs in the background, or the run is terminal; also when the turn holds a tool call the human rejected (from the session's own transcript). After `STOP_BLOCK_MAX` consecutive blocks with no tool call between them, the hook lets the stop through and records it.
 
 ## Identity and storage
 
@@ -32,6 +32,7 @@ Facts come from instrumentation; meaning comes from a state machine; the LLM con
 - Own build, minimal: tiny local process, JSONL → SQLite → SSE to browser; no Docker.
 - Read-only window: all runs across worktrees as lanes — stage, current slice, reviewer verdicts, escalation queue.
 - Human decisions (gates, escalations, cuts) are first-class, human-attributed events.
+- Artifact view: the redacted text of each gate-pinned artifact, carried in event data — never read from disk by the dashboard.
 - Borrows agents-observe patterns, not code.
 
 ## Replay

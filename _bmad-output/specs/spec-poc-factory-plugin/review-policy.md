@@ -34,14 +34,20 @@
 3. Non-convergence: same finding bounced twice, or slice over its time box (default 30 min, set at INTAKE).
 4. Builder/reviewer taste disagreement.
 
+## SCAFFOLD repair
+
+- One repair round before the SCAFFOLD failure ask: the scaffolder gets the failing checks and may change only the run contract's commands (env, flags, timeouts) and point tool caches at the run's own cache directory.
+- It never deletes or edits anything outside the worktree, changes a tracked file, or adds a dependency (escalation 2 still applies).
+- A project-side cause (secrets, services, a broken repo) skips the round.
+
 ## Every human ask — closed list
 
 | Ask | Kind |
 |---|---|
 | Intake confirm, gate 1, gate 2, budget-clock cut, merge OK | Planned gate |
 | Escalation conditions 1–4 (above) | Escalation |
-| SCAFFOLD failure (project won't install/start/test) | Declared ask |
+| SCAFFOLD failure (project won't install/start/test after the factory's one repair round, or the scaffolder names a project-side cause) | Declared ask |
 | Designer's one question (invent mode) | Declared ask |
 | Resume selection (several live runs) | Declared ask |
 
-Planned gates and declared asks are not escalations. Anything not in this table never reaches the human; lost liveness is a dashboard-only notice. Chat and dashboard show each ask with the same title, reason, and commands.
+Planned gates and declared asks are not escalations. Anything not in this table never reaches the human; lost liveness is a dashboard-only notice. Chat and dashboard show each ask with the same title, reason, commands, what each command does next, and what a chat reply does.

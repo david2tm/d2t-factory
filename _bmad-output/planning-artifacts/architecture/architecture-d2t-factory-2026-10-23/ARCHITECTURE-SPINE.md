@@ -174,9 +174,10 @@ flowchart BT
   - **`step_verified`.** When `next` or `done` observes the evidence, the CLI appends `step_verified{step_id, evidence:[fact ids]}`. Only `step_verified` unblocks dependent steps.
   - **Supporting facts.** A `tool_succeeded` from a test the builder ran itself is shown as supporting, never as verified.
   - **Overlay states** (the board's CLAIMED / VERIFIED / UNVERIFIED) apply only to `reported` steps:
-    - **reported:** evidence is pending, and it is younger than `CLAIM_OVERDUE_MS` since `step_reported`.
+    - **reported:** evidence is pending. `waiting_on` says on what: `human` (an `ask_human` step, or the subject of an open ask), `checks` (its `run_check` steps are issued and not verified), or null (only hook facts). Only a null wait has an `overdue_at`.
     - **verified.**
-    - **unverified.**
+    - **unverified:** `waiting_on` is null, and `CLAIM_OVERDUE_MS` has passed since `step_reported`. It means only "claimed, and the hooks never confirmed it".
+    - The CLI's overdue reissue (AD-24) and the board both use this one overlay (dry run 1, finding 5).
 ### AD-8 — Evidence checks and all git run in the CLI
 
 - **Binds:** CAP-4, CAP-5, CAP-7, CAP-8, CAP-12, CAP-13
@@ -194,6 +195,7 @@ flowchart BT
     - `run_started` snapshots the main checkout's `git status --porcelain=v2` as `git.baseline`. The main checkout must equal it at the end of ORIENT, at SCAFFOLD done and before merge.
     - At SCAFFOLD done, the worktree has no tracked changes.
     - At slice close, `git.deps` diffs manifests and lockfiles. Any change raises a `New dependency:` escalation.
+    - **SCAFFOLD repair.** A failed SCAFFOLD check resumes the scaffolder once (`SCAFFOLD_REPAIR_ROUNDS`) with a repair brief (`review-policy.md` SCAFFOLD repair) before `scaffold_failure` is raised; the card lists both rounds. An `ESCALATE` from the scaffolder raises it at once. `paths.ts` adds `runs/<run-id>/cache/`, exported to every contract command as `FACTORY_CACHE_DIR`.
   - **Git.** Every git operation lives in the CLI: baseline, worktree add, the per-step commits (AD-30), merge, and PR via `gh`.
   - **Merge.** After `merge_approved`, the CLI performs the merge. A conflict issues a builder step, and the CLI re-runs test plus `reviewer-code` before raising MERGE again.
 ### AD-9 — Identity: repo, run, branch
@@ -241,7 +243,9 @@ flowchart BT
   - The synchronous Stop hook calls `core`'s `mayStop(state, background_tasks)`. It is true iff one of these holds:
     - every open step is either `ask_human`, or claimed and running in the background (a `d2t-factory:*` entry or a background shell in `background_tasks`);
     - the run is terminal.
-  - Otherwise the hook blocks, whatever `stop_hook_active` says. Claude Code's 8-continuation cap is the backstop.
+  - **Human rejection.** The hook also allows the stop when the session's own transcript (located as in AD-6) holds, after the turn's last human prompt, a tool use the human rejected, matched on Claude Code's structured record (fixture pinned by story 6-1), never on a substring. It appends `stop_yielded{reason, tool_use_id}`. A user interrupt never reaches Stop: Claude Code skips the hook then.
+  - **Block cap.** Otherwise the hook blocks, whatever `stop_hook_active` says, up to `STOP_BLOCK_MAX` consecutive blocks for the holder session (counter in `sessions/<session>.stop`; reset by a `tool_*` fact from that session after the last block, or by a human prompt). The next stop then passes and appends `stop_forced{blocks}`. Claude Code's own cap (8 continuations, also reset by a tool call) is never reached.
+  - Both facts are a dashboard-only lane notice (`PAUSED`); the `SessionStart` nudge resumes the run.
   - INTAKE turns, the designer's question and every escalation are `ask_human` steps.
   - Unbound sessions, and sessions that aren't the run's current holder, always pass.
   - **Always-on nudge.** On `startup`, `clear`, `resume` and `compact`, the `SessionStart` hook of a bound session injects the bound run, its stage and "run `factory next`" as `additionalContext`. This covers turns that end without Stop firing, such as `StopFailure` or `/clear`.
@@ -313,7 +317,7 @@ flowchart BT
 - **Rule:**
   - **`now` sets flags only:** `overdue`, `at_risk`, `timebox_exceeded`, `signal_lost`.
   - **Time-driven transitions** exist only as commands the CLI appended: `ask_raised` for a cut, or for an `Over time box` escalation.
-  - **The budget clock** runs from `run_started.ts`, or from the intake's `started` if that is earlier. It never pauses.
+  - **The clock** runs from `run_started.ts`, or from the intake's `started` if that is earlier. It never pauses. With `limit_min` it is the budget clock (`cut_at`, `ends_at`); without it the projection carries only `clock_start`, the board shows elapsed time, and no cut is ever raised.
   - **The slice time box** counts wall time since `slice_started`, minus time with an open escalation on that slice.
   - **Waking the conductor.** On a `wait`, the conductor runs `factory next --wait <ms>` as a background Bash. `retry_after_ms` is never later than the next deadline: a cut, a time box or a claim overdue. When the shell exits, Claude Code wakes the conductor. There is no monitor.
   - **Timestamps.** A fact's `ts` is the hook's wall clock. Facts are ordered by `(ts, id)`, and only for display.
@@ -378,6 +382,9 @@ flowchart BT
     | `PORT_RANGE` | 5100–5199 |
     | `LOCK_WAIT_MS` | 10 000 |
     | `SPEC_MAX_LINES` | 40 |
+    | `STOP_BLOCK_MAX` | 3 |
+    | `SCAFFOLD_REPAIR_ROUNDS` | 1 |
+    | `ARTIFACT_EMBED_MAX` | 64 KiB |
 
   - **Non-convergence:** the slice's round count reaches `MAX_RETRIGGER_ROUNDS` with a `FINDINGS` verdict still outstanding. A round is one builder `resume` issued in response to `FINDINGS`.
   - **SIGNAL LOST** is a live-only dashboard overlay that applies only in working states. It fires when no event has arrived for `SIGNAL_LOST_MISSED × HEARTBEAT_INTERVAL_MS` **and** no session bound to the run appears in `claude agents --json` (an idle session counts as live). Replay derives it from event gaps alone. The CLI never reads it.
@@ -403,7 +410,8 @@ flowchart BT
     - escalations: `E<n>`, label, line, slice/stage;
     - findings;
     - verdicts;
-    - merge resolutions.
+    - merge resolutions;
+    - the pinned artifacts: at `step_verified` of an intake, spec-writer, designer or slicer step, the redacted body (≤ `ARTIFACT_EMBED_MAX`, else truncated and marked), its sha256 and path.
   - The dashboard never reads `artifacts/`.
 
 ### AD-24 — Step lifecycle
@@ -416,7 +424,7 @@ flowchart BT
   - **Claiming.** `factory claim <step_id> [--agent-id]` appends `step_claimed` (with `session`), or fails with `CLAIM_TAKEN`.
   - **Time limits.**
     - `claimed` steps never time out. The slice time box covers long work.
-    - A `reported` step whose evidence is still missing `CLAIM_OVERDUE_MS` after `step_reported` is reissued once, then raises an `ask_human`.
+    - A `reported` step whose evidence is still missing `CLAIM_OVERDUE_MS` after `step_reported`, and whose `waiting_on` is null (AD-7), is reissued once, then raises an `ask_human`.
   - **Orphans.** A claim held by a superseded session is orphaned. It is reissued (`step_reissued{old,new}`, a new `step_id` and `output_path`, `attempt+1`) only once one of these holds:
     - its attributed `subagent_stopped` has arrived;
     - no fact has come from its `agent_id` for `SIGNAL_LOST_MISSED × HEARTBEAT_INTERVAL_MS`.
@@ -456,7 +464,7 @@ flowchart BT
 - **Prevents:** Agents and the CLI disagreeing on what the files contain, and two owners of the roster.
 - **Rule:**
   - **Schemas.** `src/core/artifacts.ts` defines the YAML front matter that agents write and only the CLI parses:
-    - **intake:** `limit_min`, `slice_timebox_min?`, `ui_free`, `reviewer_overrides`, `started?`
+    - **intake:** `task`, `scope{in[], out[]}`, `limit_min?`, `slice_timebox_min?`, `ui_free`, `reviewer_overrides`, `started?` (only with `limit_min`)
     - **context:** `origin` (`brownfield|greenfield`), `ui_surface`, `ui_reference?`
     - **run-contract:** `install`, `add`, `start`, `url`, `port` (must echo the claimed one), `test`, `health`, `e2e?`, `copy_gitignored[]`, `services[{name, shared}]`
     - **spec:** `acceptance[{id: AC-<n>, check:{kind: command|page, …}}]`, `assumptions[]`
@@ -541,13 +549,14 @@ flowchart BT
 - **Binds:** CAP-10, CAP-15; the constraint "foreground human decisions"
 - **Prevents:** Chat and board showing different titles, reasons or commands, and prompts that map to no gate or condition.
 - **Rule:**
-  - **The function.** `src/core/cards.ts` derives `card = {type, title, reason_label?, reason?, commands[]}` from state.
+  - **The function.** `src/core/cards.ts` derives `card = {type, title, reason_label?, reason?, details?[], options?[{command, then}], reply?, commands[]}` from state.
+    - `commands[]` = `options.map(command)` when `options` is present. Each `then` says what happens next if that command is typed. `reply` says what a chat reply does at this card, truthfully: at the intake card it changes the intake; elsewhere it changes nothing (AD-6). Cards in older recordings have no `options`; the board shows `commands`.
     - `type` is one of `intake`, `gate_1`, `gate_2`, `cut`, `merge`, `escalation` (with `condition` 1–4), `design_choice`, `scaffold_failure` or `resume_select`.
     - `commands` are the exact `/factory …` decisions that are legal for that card.
-    - The `intake` card shows `limit_min`, `slice_timebox_min`, `ui_free` and `reviewer_overrides` from the intake output.
+    - The `intake` card shows `task` and `scope` as `details`, then `limit_min` (or `no time limit`), `slice_timebox_min`, `ui_free` and `reviewer_overrides` from the intake output.
   - **The event.** `ask_raised` records the card in `data.card`.
   - **Where it's used.** `next` embeds it, and the dashboard projection uses the same function.
-  - **The conductor** prints it verbatim as the last lines of any turn that ends on `ask_human`. It addresses the human only inside `ask_human` steps or INTAKE.
+  - **The conductor** prints it verbatim as the last lines of any turn that ends on `ask_human`, in the order title, reason, details, `To continue, type one of:`, each `command — then`, reply. It addresses the human only inside `ask_human` steps or INTAKE.
 
 ### AD-35 — One-time setup owns permissions and tooling
 
@@ -749,7 +758,7 @@ These were the spikes for increment 0. Each one has a default to build on, a pas
 | Sandboxed writes | Pass; setup creates `~/.factory` (AD-35) |
 | Browser isolation | Isolation holds, but not under the sandbox; still open (AD-22) |
 | Wake-up | Pass |
-| Stop and nudge | Stop blocking passes; resume after `/clear` amended (AD-12, AD-25) |
+| Stop and nudge | Stop blocking passes; resume after `/clear` amended (AD-12, AD-25). Dry run 1: blocking after a human rejection fought the human until Claude Code's cap (8 continuations, then an override); amended with the rejection exit and `STOP_BLOCK_MAX` (AD-12) |
 | Fact completeness | Pass |
 
 | Spike | Build on | Passes when | Fallback |

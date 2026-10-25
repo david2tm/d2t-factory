@@ -124,3 +124,41 @@
     runner so every later stage runs unchanged (CAP-3, CAP-4, CAP-6).
   done_checkpoint: true
   invoke_dev_with: "Governing decisions: AD-9, AD-27."
+
+- id: "6-1"
+  title: Stop hook yields to a human rejection; factory-owned block cap
+  description: >-
+    Starts with a spike that pins Claude Code's transcript record of a human-rejected tool call
+    as a fixture; then the rejection exit and STOP_BLOCK_MAX in the Stop hook, with stop_yielded /
+    stop_forced facts and the PAUSED lane notice (dry run 1 finding 9, CAP-14). If the spike finds
+    no reliable record, ship the block cap alone.
+  invoke_dev_with: >-
+    Governing decisions: AD-6 (transcript locator), AD-12, AD-21, AD-31. Source:
+    planning-artifacts/sprint-change-proposal-2026-10-25.md section 4.6.
+
+- id: "6-2"
+  title: Cards that say what's next; intake task and scope; optional time limit
+  description: >-
+    Card options/then/reply/details on every card, intake task and scope, optional limit_min
+    with the elapsed-time clock, neutral wording (dry run 1 findings 2, 3, 4; CAP-2, CAP-11).
+  invoke_dev_with: >-
+    Governing decisions: AD-17, AD-27, AD-34. Additive within v:1 (AD-32). Source:
+    sprint-change-proposal-2026-10-25.md sections 4.1, 4.2.
+
+- id: "6-3"
+  title: Claim waiting states and pinned-artifact view
+  description: >-
+    waiting_on in the claim overlay shared by CLI and board; redacted pinned artifacts in
+    step_verified data and the Artifact drawer with copy-path (dry run 1 findings 5, 8; CAP-15).
+  invoke_dev_with: >-
+    Governing decisions: AD-7, AD-10, AD-14, AD-23. The dashboard never reads artifacts/.
+    Source: sprint-change-proposal-2026-10-25.md sections 4.3, 4.5.
+
+- id: "6-4"
+  title: SCAFFOLD repair round
+  description: >-
+    One scaffolder repair round within the repair envelope before the SCAFFOLD failure ask,
+    with a run-local cache dir (dry run 1 finding 6b; CAP-4, review-policy.md).
+  invoke_dev_with: >-
+    Governing decisions: AD-8, AD-21, AD-24 (resume), AD-27. Source:
+    sprint-change-proposal-2026-10-25.md section 4.4.
