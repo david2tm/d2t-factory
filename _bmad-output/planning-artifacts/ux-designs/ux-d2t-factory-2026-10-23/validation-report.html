@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<!--
+  UX Design Validation Report — skeleton template.
+
+  This file is a starter the synthesis pass fills in directly. There is no
+  substitution engine. The LLM:
+    1. Reads {doc_workspace}/review-rubric.md and every review-{slug}.md from
+       additional reviewers.
+    2. Copies this skeleton.
+    3. Replaces the placeholder content (everything between TEMPLATE markers)
+       with the consolidated review, preserving the structure and CSS.
+    4. Writes the result to {doc_workspace}/validation-report.html.
+    5. Writes a markdown twin to {doc_workspace}/validation-report.md.
+
+  Visual rules the LLM must preserve:
+    - The container width, the color tokens, the typography.
+    - One dimension = one collapsible <section class="dimension">.
+    - Verdict pill uses the verdict-* class matching its judgment.
+    - Severity badge uses the badge-sev-* class matching its level.
+    - Each extra reviewer (accessibility, adversarial, etc.) gets its own
+      collapsible section below the rubric dimensions.
+    - The footer always shows the artifact paths and timestamp.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UX Design Validation: d2t-factory</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    font-size: 15.5px;
+  }
+  .synthesis p { margin: 0 0 10px; }
+  .synthesis p:last-child { margin-bottom: 0; }
+
+  .dimension-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  section summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before {
+    content: "▸";
+    display: inline-block;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 {
+    display: inline;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    flex: 1;
+  }
+  .verdict-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: white;
+  }
+  .verdict-strong { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+  .verdict-thin { background: var(--verdict-thin); }
+  .verdict-broken { background: var(--verdict-broken); }
+
+  .dim-body { padding: 4px 20px 18px; }
+  .dim-judgment { color: var(--text); font-size: 14.5px; }
+  .dim-judgment p { margin: 0 0 10px; }
+
+  .findings-list { padding: 0 20px 4px; }
+  article.finding {
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  article.finding:first-child { border-top: none; }
+  article.finding header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+  }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+
+  .reviewer-source {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .mechanical {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; }
+  .mechanical li { margin-bottom: 4px; color: var(--text); }
+
+  footer.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- TEMPLATE: header. Fill ux spec name and ux spec path. No overall grade —
+         per-category verdicts and severity counts below carry the picture. -->
+    <header class="report-header">
+      <div class="title">
+        <h1>d2t-factory — UX Design Validation Report</h1>
+        <div class="subtitle">/Users/d2t/Projects/d2t-factory/_bmad-output/planning-artifacts/ux-designs/ux-d2t-factory-2026-10-23/DESIGN.md + EXPERIENCE.md</div>
+      </div>
+    </header>
+
+    <!-- TEMPLATE: overall synthesis paragraphs. Lift directly from
+         review-rubric.md "Overall verdict" section; expand if extra reviewers
+         (accessibility, adversarial, etc.) materially shift the picture.
+         Wrap each paragraph in <p>. -->
+    <div class="synthesis">
+      <p>The pair is a usable contract: every <code>{token}</code> reference resolves, all 83 color tokens carry hex, the 24 components have matching rows in both files under identical names, and the board's lifecycle, modes and core states are committed in tables a story-dev can lift directly. The gaps are a few decisions left open that sit right on the product's thesis ("foreground human decisions"). The Done-stack collapse hides Decision seals, against the spine's own never-hide rule. The Evidence drawer has no content defined for a Decision seal. Escalation reason labels exist for only one of the four conditions. Fix those three, plus a cluster of medium consistency issues (amber's job, the "seal" naming overlap, the keyboard-shortcut conflicts, the incomplete CAP list), and the pair is strong.</p>
+    </div>
+
+    <!-- TEMPLATE: dimension summary cards. One per rubric category, in this
+         canonical order (from references/validate.md):
+           1. Flow coverage
+           2. Token completeness
+           3. Component coverage
+           4. State coverage
+           5. Visual reference coverage
+           6. Bloat & overspecification
+           7. Inheritance discipline
+           8. Shape fit
+         The dim-verdict text uses one of: strong | adequate | thin | broken. -->
+    <div class="dimension-summary">
+      <div class="dim-card">
+        <div class="dim-name">Flow coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Token completeness</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Component coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">State coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Visual reference coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Bloat &amp; overspecification</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Inheritance discipline</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Shape fit</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+    </div>
+
+    <!-- TEMPLATE: one section per rubric category, same canonical order as the
+         summary cards above. Skip a category entirely if the rubric review
+         marked it n/a for this UX spec. Open the section by default if verdict
+         is thin or broken. -->
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Flow coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Checked: sources frontmatter → SPEC CAP-1…16 and the stage/escalation vocabulary in <code>pipeline-stages.md</code>, <code>review-policy.md</code>, <code>truth-layer.md</code>. UX-touching CAPs: 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 15, 16. Three Key Flows exist (live run, replay, recovery). Each has numbered steps, a bold <strong>Climax</strong> beat and a failure line. Flow 1 covers CAP-1 start, 2, 5/6/7, 8, 10 (taste disagreement), 11 (cut as failure path), 13 and 15. Flow 2 covers 15/16. Flow 3 covers CAP-1 resume and liveness. CAP-3 is present via the origin tag (no flow needed). Uncovered: rework, gate rejection, three of the four escalation conditions, SCAFFOLD failure, CAP-12 refusal.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Escalation reason labels committed for only 1 of 4 conditions</h3>
+              <span class="finding-location">EXPERIENCE L67, L80, L116, L125, L144</span>
+            </header>
+            <div class="finding-note">Only one of the four escalation conditions has a committed reason label (<code>Taste disagreement:</code>). Conditions 1–3 from <code>review-policy.md</code> have none: scope/intent change or spec ambiguity, irreversible/outward action (including the brownfield-only new-dependency page), and non-convergence or a slice over its time box. The SCAFFOLD-failure ESCALATION reason is also unnamed. Voice rules require the card and the chat message to reuse these strings verbatim, so story-dev will invent up to five labels.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a reason-label table: <code>Scope change:</code> / <code>Spec ambiguity:</code> / <code>Irreversible action:</code> / <code>New dependency:</code> / <code>Non-convergence:</code> / <code>Over time box:</code> / <code>Taste disagreement:</code> / <code>Scaffold failed:</code>, each with one example body line.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No flow for rework or gate rejection</h3>
+              <span class="finding-location">EXPERIENCE L73, L104; Key Flows</span>
+            </header>
+            <div class="finding-note"><code>/factory rework &lt;note&gt;</code> (CAP-1) and gate rejection have no flow, only table rows. It is never shown what happens when d2t does not approve Gate 1/2, which card returns, whether the Gate card leaves Needs You, or whether reviewers re-run.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a Flow 1 failure path or a short Flow 4: Gate 1 → d2t reworks the spec → SPEC returns to In Progress with <code>rework · Master d2t</code> → Gate 1 re-raised.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">CUT and conflicted-merge outcomes compressed to one line</h3>
+              <span class="finding-location">EXPERIENCE L247, L249; L71–72</span>
+            </header>
+            <div class="finding-note">The CUT (CAP-11) and conflicted-merge (CAP-13) outcomes are compressed into one line each. The lifecycle table carries the detail, but the flows don't exercise the kept-vs-cut split or the resolutions body.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add one step each, or point the failure line at the lifecycle rows.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">CAP-12 run refusal has no chat microcopy</h3>
+              <span class="finding-location">EXPERIENCE Chat surfaces L97–106</span>
+            </header>
+            <div class="finding-note">CAP-12 (second concurrent run refused when the run contract lists a shared DB; run-id claim fails) has no chat microcopy or flow.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a chat-surface row with the refusal message.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Flow 3 names no protagonist or context</h3>
+              <span class="finding-location">EXPERIENCE L262</span>
+            </header>
+            <div class="finding-note">Flow 3's heading names no protagonist or context, unlike Flows 1–2.</div>
+            <div class="finding-fix"><strong>Fix:</strong> "(d2t, mid-interview, after a panicked <code>/clear</code>)".</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Replay flow has no real failure path</h3>
+              <span class="finding-location">EXPERIENCE L260</span>
+            </header>
+            <div class="finding-note">Flow 2's failure line ("live demo stalls → switch to replay") is the entry condition, not a failure of replay itself. Nothing covers a recording that is missing or fails to load.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a <code>Recording not found</code> failure path that references the new state row (see §4).</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Token completeness</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Checked: all 83 <code>colors</code> (hex, including 8-digit alpha), 16 <code>typography</code> roles, 10 <code>rounded</code>, 23 <code>spacing</code>, 24 <code>components</code>. Ran a resolver over every <code>{path.to.token}</code>: 69 unique refs in DESIGN.md and 2 in EXPERIENCE.md (<code>{colors.amber}</code>, <code>{colors.holo}</code>), all resolve. No color is missing hex. Dark-only is declared, so no light/dark pairs are needed. The contrast table exists, and recomputing it from the tokens reproduces every stated ratio within ±0.1, apart from the two alpha-fill rows noted below.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">UNVERIFIED chip label measures 4.49:1 on its composited fill</h3>
+              <span class="finding-location">DESIGN Contrast targets L396; YAML L54</span>
+            </header>
+            <div class="finding-note">The UNVERIFIED chip contrast is stated as 5.3:1 (<code>danger</code> on fill), but that is <code>danger</code> on bare <code>card-top</code>. Compositing <code>danger-a</code> (<code>#ff6a3d24</code>) over <code>card-top</code> gives <strong>4.49:1</strong>. That is below the spine's own 4.5:1 text floor, on an 11px label for the one state that says "this claim is not proven".</div>
+            <div class="finding-fix"><strong>Fix:</strong> measure against the composited fill. Either set the chip label to <code>danger-text</code> (8.3:1) or drop <code>danger-a</code> to <code>#ff6a3d1a</code> (4.75:1), then restate the ratio.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Amber has two jobs across the spines</h3>
+              <span class="finding-location">DESIGN L376; EXPERIENCE L140</span>
+            </header>
+            <div class="finding-note">Amber has two jobs across the spines. DESIGN says amber has "one job: the AT RISK edge" (DESIGN §Colors L376). EXPERIENCE also uses <code>{colors.amber}</code> for the Budget clock overrun <code>+m:ss over</code> (EXPERIENCE §Component Patterns L140), which has no component token and no measured contrast on <code>space-3</code> (7.45:1 computed).</div>
+            <div class="finding-fix"><strong>Fix:</strong> add overrun to amber's job list, add <code>budget-clock.over: '{colors.amber}'</code>, and add the <code>amber</code> on <code>space-3</code> row.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Orphan color tokens (needs-text-sid, gold-a1, gold-2)</h3>
+              <span class="finding-location">DESIGN YAML L40, L43, L51; L476</span>
+            </header>
+            <div class="finding-note">Three color tokens are orphans: <code>needs-text-sid</code> (opaque name, used nowhere), <code>gold-a1</code> and <code>gold-2</code> are defined but never referenced in prose or components (DESIGN YAML L40, L43, L51). The future-pip "dim brown" (L476) may be <code>gold-2</code> but doesn't say so.</div>
+            <div class="finding-fix"><strong>Fix:</strong> reference them where used (e.g. <code>replay-bar.pip-future: '{colors.gold-2}'</code>), and rename or delete <code>needs-text-sid</code>.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Shadows, glows, and hologram values are untokenized prose</h3>
+              <span class="finding-location">DESIGN Elevation &amp; Depth L430–433; Colors L377</span>
+            </header>
+            <div class="finding-note">Shadows, glows, the inner highlight <code>rgba(255,255,255,.07)</code>, scan-line pitch, nebula opacities and the hologram treatment exist only as raw prose values (DESIGN §Elevation &amp; Depth L430–433; §Colors L377). Implementers will hand-copy them, and they will drift.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add component-level tokens (e.g. <code>slice-card.shadow</code>, <code>needs-you-card.shadow</code>) or a single shadow table.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">min-text font floor filed under spacing</h3>
+              <span class="finding-location">DESIGN YAML L204; L414</span>
+            </header>
+            <div class="finding-note"><code>min-text: 11px</code> lives under <code>spacing</code> but is a font-size floor.</div>
+            <div class="finding-fix"><strong>Fix:</strong> express it as <code>{typography.tag.fontSize}</code>, or keep it as a note outside <code>spacing</code>.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Component coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Checked: the 24 YAML component keys, the 24 DESIGN §Components bullets and the 24 EXPERIENCE §Component Patterns rows. Names are identical across all three lists. Every behavioral row has a real rule, not a one-word description. Swept both files for other component-like names. Most are anatomy of an existing component (Master d2t seat, Copy button, run-id chip, slice-id chip, origin tag, <code>+N</code> deck, mini plates). The gaps are state variants and two rendering rules.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Slice/Stage card state variants have no visual spec</h3>
+              <span class="finding-location">DESIGN L460–461, YAML L261–274; EXPERIENCE L71, L165, L167</span>
+            </header>
+            <div class="finding-note">Slice card and Stage card state variants are defined behaviorally but not visually. Missing: the AT RISK amber edge with label <code>AT RISK · cut candidate</code>; the SIGNAL LOST danger border with <code>SIGNAL LOST · last seen 4m ago</code>; the evidence-selected gold outline with the <code>EVIDENCE ▸</code> tab (it appears only inside the Evidence drawer bullet); a cut slice in Done. The YAML has no token for any of these.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a "Variants" line to the Slice card and Stage card bullets, with tokens (<code>slice-card.at-risk-edge: '{colors.amber}'</code>, <code>slice-card.lost-border: '{colors.danger}'</code>, <code>slice-card.selected: '{colors.gold}'</code>).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Verdict list renders only APPROVE and reviewing</h3>
+              <span class="finding-location">DESIGN L463; EXPERIENCE L145</span>
+            </header>
+            <div class="finding-note">The Verdict list renders only <code>APPROVE</code> and <code>reviewing…</code>. The appearance of a findings verdict or an <code>ESCALATE</code> verdict is unspecified. The source's first-line vocabulary is itself ambiguous (<code>VERDICT</code>, <code>STATUS</code>, or <code>APPROVE|ESCALATE</code>, <code>pipeline-stages.md</code> Agent protocol), and the spine says "verbatim" without resolving it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> list the allowed verdict words and map each to an existing token. Keep gold off agent verdicts.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Sprite scale rule contradicts slot sizes</h3>
+              <span class="finding-location">DESIGN L418, L456, L483, L487</span>
+            </header>
+            <div class="finding-note">Sprite scale rules contradict their placements. The rule is "integer scale 2× / 3×", but the Master d2t seat is 128px (4× of 32, and the art is 32×30, not 32×32) and the conductor slot is 32px (1×). Column widths, notably In Review's 250px "four-sprite cluster", were sized on 48px placeholders while the final art is 64px.</div>
+            <div class="finding-fix"><strong>Fix:</strong> state the allowed scales per slot (1× header, 2× board, 4× seat) and say which column widths grow at final art.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Mode badge OFFLINE variant and REPLAY dot unspecified</h3>
+              <span class="finding-location">DESIGN L452; EXPERIENCE L175</span>
+            </header>
+            <div class="finding-note">The Mode badge has no visual spec for <code>OFFLINE · reconnecting</code> or the 70% board dim, and the REPLAY dot color is unspecified (the mock uses <code>text-2</code>).</div>
+            <div class="finding-fix"><strong>Fix:</strong> add an OFFLINE variant (dot <code>text-3</code>, no danger, no glow) and name the REPLAY dot token.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Gate checks: Claim chips or plain text?</h3>
+              <span class="finding-location">DESIGN L469; EXPERIENCE L146, L168</span>
+            </header>
+            <div class="finding-note">EXPERIENCE says Claim chips appear on "Gate card checks" (L146). DESIGN's Needs You card shows checks as plain text (<code>3 assumptions to check</code>, L469). "Gate card" / "GATE card" is also used as if it were a component name.</div>
+            <div class="finding-fix"><strong>Fix:</strong> decide whether gate checks carry chips, align both files, and write "Needs You card (GATE)".</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>State coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Walked the IA surfaces: Top bar, Column headers, Swimlanes (each column cell), Needs You, Evidence drawer, Replay bar, Live/Replay modes, chat surfaces. Covered well: cold load (no spinners), no runs, server disconnected, replay ended, empty Backlog before Gate 2, reviewer standing by, Done overflow, run complete, SIGNAL LOST, cut point, gate waiting, all three claim states, focus ring and focus return, reduced motion. Gaps are below.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Done-stack collapse hides Decision seals</h3>
+              <span class="finding-location">DESIGN L473, L515; EXPERIENCE L147, L152</span>
+            </header>
+            <div class="finding-note">Done-stack collapse hides Decision seals, against the spine's hard rule. The deck is "not expandable in the POC" (EXPERIENCE L152) and "Seals stay visible on visible cards" (DESIGN L473). That conflicts with "Never removed" (EXPERIENCE L147) and the Don't "Fade, collapse away, or hide a seal when a card ages" (DESIGN L515). In Flow 1, Done holds six stage cards before any slice lands, so the <code>intake confirmed</code> and both Gate 1 seals collapse out of sight. The approved mock already does this with INTAKE. This cuts against CAP-15 "human-attributed events" and SPEC "every surface foregrounds human decisions".</div>
+            <div class="finding-fix"><strong>Fix:</strong> exempt sealed cards from collapse (collapse only unsealed machine stages), or render each collapsed seal as a clickable gold glyph on the deck.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Evidence drawer content for a Decision seal undefined</h3>
+              <span class="finding-location">DESIGN L475; EXPERIENCE L147, L154, L182</span>
+            </header>
+            <div class="finding-note">Evidence drawer content for a Decision seal is undefined. Clicking any Decision seal opens the drawer (EXPERIENCE L147, L154, L182). However, the drawer spec, hero copy and HOOK FACT / CLAIM → PROOF anatomy describe only a claim being verified (DESIGN §Evidence drawer L475; EXPERIENCE L154). Nothing says what a gate, cut, merge, rework or intake seal shows: who, when, what was typed, the state-machine event, or gate evidence (CAP-14).</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a "Decision" drawer variant. Hero: seal + decision line. Table: event · decided by · at · terminal response · run / stage · evidence checked. No claim chain.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Keyboard shortcuts conflict (Esc scope, Space, arrows)</h3>
+              <span class="finding-location">EXPERIENCE L154, L182–186, L228</span>
+            </header>
+            <div class="finding-note">Keyboard primitives conflict. <code>Esc</code> closes the drawer generally (L154, L182), but the keyboard list scopes <code>Esc</code> to "replay mode only" (L186). The global <code>Space</code> and <code>←/→</code> shortcuts collide with native activation of a focused Copy button or checkbox, and with arrow-key movement inside the speed radio group the spine itself mandates.</div>
+            <div class="finding-fix"><strong>Fix:</strong> make <code>Esc</code> work in both modes, and suppress the replay shortcuts while focus is on a button, checkbox or radio.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Replay entry states missing</h3>
+              <span class="finding-location">EXPERIENCE Modes L91; State Patterns L176</span>
+            </header>
+            <div class="finding-note">Replay entry states are missing: loading a recording, recording not found or a malformed <code>/replay/&lt;recording&gt;</code> URL, the initial playhead state (paused at 00:00:00 or autoplay), and what an open drawer does when the playhead seeks before its source event.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add four State Patterns rows.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Pipelined-findings card placement undefined</h3>
+              <span class="finding-location">EXPERIENCE L143, L151</span>
+            </header>
+            <div class="finding-note">Placement of pipelined findings is undefined. When findings on S*n* arrive while Brix builds S*n+1* (<code>pipeline-stages.md</code> Agent protocol), the spine says the card goes "back to In Progress on findings" (L143), but the builder stays on S*n+1* and an agent works one card at a time (L151). Nothing says which column S*n* sits in, or how the retrigger round count (max 2, CAP-8) shows.</div>
+            <div class="finding-fix"><strong>Fix:</strong> define a <code>findings queued</code> marker on S*n* in In Review and a <code>round n/2</code> meta line.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Abandoned run and sticky headers uncovered</h3>
+              <span class="finding-location">EXPERIENCE IA L39; State Patterns</span>
+            </header>
+            <div class="finding-note">There is no treatment for an abandoned or terminated run that never resumes. It is unstated whether the column headers and Master d2t seat stick when many lanes scroll vertically.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a run-abandoned row and a sticky-header rule.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Copy failure and aria-live burst at 16x uncovered</h3>
+              <span class="finding-location">EXPERIENCE L181, L230</span>
+            </header>
+            <div class="finding-note">Copy failure (clipboard denied) is not covered. At <code>16×</code> replay, <code>aria-live</code> Needs You announcements may burst.</div>
+            <div class="finding-fix"><strong>Fix:</strong> fall back to selecting the command text, and coalesce or suppress announcements at 16×.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Visual reference coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Inventory: <code>mockups/key-dashboard.html</code> (the only file); <code>wireframes/</code> absent; <code>imports/</code> empty. The mock appears in both <code>sources</code> lists. It is linked at the top of DESIGN (L353) and in EXPERIENCE Foundation (L29). EXPERIENCE names what it illustrates (replay mode, two lanes, evidence drawer, replay bar, States section). "Spine wins on conflict" is stated once per file. There are no orphans. One divergence is called out explicitly (the VERIFIED word, DESIGN L466).</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Mock linked only at file tops</h3>
+              <span class="finding-location">DESIGN L353; EXPERIENCE L29</span>
+            </header>
+            <div class="finding-note">The mock is linked only at the top of each file, not at the sections it illustrates (Evidence drawer, Replay bar, Needs You card, the mock's States section vs EXPERIENCE State Patterns). DESIGN's link names nothing it illustrates.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add one-line <code>→ mock: &lt;section&gt;</code> pointers at those sections.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Unlisted mock deltas (off-token CSS)</h3>
+              <span class="finding-location">mockups/key-dashboard.html .mode</span>
+            </header>
+            <div class="finding-note">Several mock deltas are unlisted: off-token values (Mode badge border <code>#4e5f97</code>, background <code>#141d42</code>, 12px text vs <code>tag</code> 11px), 2-frame placeholders, and no travel animation. "Spine wins" covers them, but an implementer reading the mock's CSS will copy them (mockups/key-dashboard.html <code>.mode</code>).</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a short "Mock deltas" note under the DESIGN link.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Stale duplicate mock in .working/</h3>
+              <span class="finding-location">.working/</span>
+            </header>
+            <div class="finding-note"><code>.working/key-dashboard.html</code> is a byte-identical copy of the mock, alongside pre-accept spine copies. They are easy to mistake for live references.</div>
+            <div class="finding-fix"><strong>Fix:</strong> delete <code>.working/</code> or mark it scratch.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Bloat &amp; overspecification</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Checked for source restatement, pixel specs that duplicate tokens, prose where a table would do, and narrative not tied to a decision. EXPERIENCE references requirements by CAP ID without restating them. Its prose is terse and table-first. The DESIGN editorial voice (Brand &amp; Style) ties every flourish to a rule (gold = d2t, cyan = agents). Component pixel sizes (34×18 toggle, 236px clock, 92px key column) are not covered by tokens, so they earn their place.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Done-stack rule stated four times</h3>
+              <span class="finding-location">EXPERIENCE L51, L152, L171; DESIGN L473</span>
+            </header>
+            <div class="finding-note">The Done-stack collapse rule is stated four times (EXPERIENCE IA L51, Component Patterns L152, State Patterns L171; DESIGN L473). The copies agree today, but this is where the §4 seal conflict hid.</div>
+            <div class="finding-fix"><strong>Fix:</strong> the behavior lives in EXPERIENCE Component Patterns and the visual in DESIGN; the other two places point to them.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">EXPERIENCE points at the memlog</h3>
+              <span class="finding-location">EXPERIENCE L138</span>
+            </header>
+            <div class="finding-note">EXPERIENCE points at the memlog ("memlog motion; idle 'look' is rendered", L138). Downstream consumers don't receive <code>.memlog.md</code>.</div>
+            <div class="finding-fix"><strong>Fix:</strong> state the rule inline.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Prose restates YAML hex/px values</h3>
+              <span class="finding-location">DESIGN L372–377, L418</span>
+            </header>
+            <div class="finding-note">DESIGN Colors and Layout prose restate hex and px values already in YAML (L372–377, L418), so there are two places to edit.</div>
+            <div class="finding-fix"><strong>Fix:</strong> in prose, name tokens and leave hex in YAML (optional; the editorial examples tolerate this).</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Inheritance discipline</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Checked: all <code>sources</code> paths resolve (<code>../../../specs/spec-poc-factory-plugin/{SPEC,pipeline-stages,review-policy,truth-layer}.md</code>, <code>mockups/key-dashboard.html</code>), and <code>design: DESIGN.md</code> resolves. CAP IDs are verbatim. Stage names, <code>merge OK</code>, Gate 1/2, budget clock, conductor, run contract and slice time box match the sources. The renaming of escalation queue → Needs You is justified in Voice. Component names are identical across both files. EXPERIENCE token refs resolve to DESIGN tokens.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Foundation CAP list incomplete</h3>
+              <span class="finding-location">EXPERIENCE L27</span>
+            </header>
+            <div class="finding-note">Foundation's CAP list ("Serves CAP-1, 5, 6, 7, 10, 11, 13, 15, 16", EXPERIENCE L27) omits CAPs the spine implements and in places cites: CAP-2 (time-box default, L144), CAP-3 (origin tag, L139), CAP-4 (SCAFFOLD failure, L67), CAP-8 (findings loop and pipelining, L70), CAP-12 (run id / worktrees, L39). Story-dev traceability breaks.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add CAP-2, 3, 4, 8 and 12.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">SCAFFOLD failure tagged ESCALATION, against spine vocabulary</h3>
+              <span class="finding-location">EXPERIENCE L67, L114</span>
+            </header>
+            <div class="finding-note">SCAFFOLD failure is tagged <code>ESCALATION</code> (L67), which contradicts the spine's own vocabulary rule that "the spec reserves <em>escalation</em> for the four conditions" (L114, <code>review-policy.md</code>). The user accepted this pending a spec fix, but the spine neither names the reason label nor tracks the spec change anywhere a consumer will see it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> name the label (<code>Scaffold failed:</code>) and add the CAP-4/CAP-10 spec-change item to §Future.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">"Seal" names both the VERIFIED chip and the Decision seal</h3>
+              <span class="finding-location">EXPERIENCE L163, L256; DESIGN L466, L475</span>
+            </header>
+            <div class="finding-note">"Seal" is overloaded. The VERIFIED Claim chip is called a "solid gold seal" or "pixel seal glyph" (EXPERIENCE L163; DESIGN L466, L475), and Flow 2 step 4 "clicks its VERIFIED seal" (L256). Meanwhile Decision seal is a separate component reserved for human decisions. A consumer can't tell which component Flow 2 exercises.</div>
+            <div class="finding-fix"><strong>Fix:</strong> use "VERIFIED chip" everywhere and reserve "seal" for Decision seal. The glyph can be shared; the name should not be.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Verified narrowed to hook facts; evidence checks have no display path</h3>
+              <span class="finding-location">DESIGN L453; EXPERIENCE L119</span>
+            </header>
+            <div class="finding-note">The spec defines verified as "hook fact <strong>or evidence check</strong> confirms it" (<code>truth-layer.md</code> Principle). The spines narrow this to hook facts only (legend <code>VERIFIED hook fact confirms</code>, DESIGN L453; Voice L119). Gate-evidence checks (CAP-14) have no display path.</div>
+            <div class="finding-fix"><strong>Fix:</strong> decide, then either widen the gloss or route evidence checks through the Decision-seal drawer (§4).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">BUILD vs BUILD LOOP; Quill vs Envoy Quill</h3>
+              <span class="finding-location">DESIGN L459, L504; EXPERIENCE L70, L106, L116, L245</span>
+            </header>
+            <div class="finding-note">Name drift. The spec's <code>BUILD LOOP</code> appears as <code>BUILD</code> in the Stage track, header and resume list (DESIGN L459; EXPERIENCE L106) and as <code>BUILD LOOP</code> in the lifecycle table (L70). DESIGN sets <code>Quill</code> as the short display name (L504), but microcopy uses <code>Envoy Quill</code>.</div>
+            <div class="finding-fix"><strong>Fix:</strong> declare the display-name form per context (board label vs reason text) and note BUILD = BUILD LOOP once.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Shape fit</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>DESIGN.md has all eight canonical sections in locked order (Brand &amp; Style → Colors → Typography → Layout &amp; Spacing → Elevation &amp; Depth → Shapes → Components → Do's and Don'ts), with Pixel sprites and Character roster correctly nested under Components. EXPERIENCE.md has all eight required defaults (Foundation, IA, Voice and Tone, Component Patterns, State Patterns, Interaction Primitives, Accessibility Floor, Key Flows). Two sections are invented. <strong>Motion</strong> earns its place: the user asked for a "wow", and it commits the coalescing, 16× skip and reduced-motion rules. <strong>Future</strong> is marginal but parks deferred decisions honestly.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Inspiration &amp; Anti-patterns triggered but absent</h3>
+              <span class="finding-location">EXPERIENCE (absent); DESIGN L357, L364; EXPERIENCE L187, L274</span>
+            </header>
+            <div class="finding-note">Inspiration &amp; Anti-patterns is triggered but absent. The memlog names KOTOR/SWTOR as the inspiration, <code>truth-layer.md</code> borrows agents-observe patterns, and there are explicit rejects: cockpit/dashboard actions, SaaS admin panel, Star Wars IP, light mode, modals/toasts. These are scattered across DESIGN Brand (L357, L364), Interaction Primitives "Banned" (L187) and Future.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a short EXPERIENCE section with what was lifted and what was rejected, and why.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">No Responsive &amp; Platform note</h3>
+              <span class="finding-location">DESIGN L424; EXPERIENCE Foundation</span>
+            </header>
+            <div class="finding-note">There is no Responsive &amp; Platform note. The desktop-only, horizontal-scroll behavior lives only in DESIGN Layout (L424), and the second surface (Claude Code chat) has no platform note.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add one line to Foundation pointing to DESIGN L424, and note that chat formatting follows Claude Code's renderer.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- TEMPLATE: mechanical notes — short, bulleted. Skip if there are none. -->
+    <div class="mechanical">
+      <h3>Mechanical notes</h3>
+      <ul>
+        <li>Token resolver: DESIGN 69/69 refs resolve; EXPERIENCE 2/2 resolve. 83/83 colors are valid hex. No broken cross-refs.</li>
+        <li>Component name parity: YAML 24 = DESIGN §Components 24 = EXPERIENCE §Component Patterns 24, identical names (kebab-case in YAML per DESIGN L449).</li>
+        <li>Contrast recomputed: all rows match within ±0.1 except two alpha-fill rows. <code>holo</code> on CLAIMED fill composites to 8.65:1 over <code>card-top</code> (stated 9.9:1; still passes). <code>danger</code> on UNVERIFIED fill composites to 4.49:1 (fails; see §2).</li>
+        <li>Hairlines <code>line</code> (1.61:1) and <code>card-edge</code> (1.88:1) on <code>space-1</code> are below 3:1, but they are declared decorative (DESIGN L372). That is acceptable only while no state relies on them.</li>
+        <li>Frontmatter: DESIGN has name/description/status/updated/sources. EXPERIENCE has name/status/updated/sources/design. Both <code>status: draft</code>, <code>updated: 2026-10-23</code>.</li>
+        <li>No Mermaid blocks. No <code>[ASSUMPTION]</code> tags remain; diffs against <code>.working/*.pre-accept.md</code> show only tag removals and the three accepted additions.</li>
+        <li>The SIGNAL LOST copy "4m (3 missed)" implies a ~80s heartbeat interval. That is an architecture decision the copy pre-commits.</li>
+        <li>The drawer at 1440px: 1440 − 320 = 1120 = column sum 1048 + 4×10 gap + 2×16 gutter. It fits exactly, with zero slack. Whether columns stretch when the drawer is closed is unstated.</li>
+      </ul>
+    </div>
+
+    <footer class="report-footer">
+      <div class="meta">
+        <span>Rubric: /Users/d2t/Projects/d2t-factory/_bmad-output/planning-artifacts/ux-designs/ux-d2t-factory-2026-10-23/review-rubric.md</span>
+        <span>DESIGN.md: /Users/d2t/Projects/d2t-factory/_bmad-output/planning-artifacts/ux-designs/ux-d2t-factory-2026-10-23/DESIGN.md</span>
+        <span>EXPERIENCE.md: /Users/d2t/Projects/d2t-factory/_bmad-output/planning-artifacts/ux-designs/ux-d2t-factory-2026-10-23/EXPERIENCE.md</span>
+        <span>Generated: 2026-10-23T16:00:00</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

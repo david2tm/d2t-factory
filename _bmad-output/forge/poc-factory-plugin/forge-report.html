@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forge Report — POC Factory</title>
+<style>
+:root{
+  --bg:#f6f1e7; --paper:#fffdf8; --ink:#1f1b16; --muted:#6b6257; --line:#e2d8c6;
+  --seal:#9e1b1b; --seal-2:#c0392b; --accent:#7a4e1d; --ok:#2f6b3a; --warn:#a1640f; --kill:#7d2b2b;
+  --chip:#efe6d5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#16130f; --paper:#1f1b16; --ink:#efe8dc; --muted:#a99e8e; --line:#3a332a;
+    --seal:#c43a3a; --seal-2:#e0564a; --accent:#d9a66a; --ok:#7fc28c; --warn:#e3a94a; --kill:#e08a8a; --chip:#2b251e;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16130f; --paper:#1f1b16; --ink:#efe8dc; --muted:#a99e8e; --line:#3a332a;
+  --seal:#c43a3a; --seal-2:#e0564a; --accent:#d9a66a; --ok:#7fc28c; --warn:#e3a94a; --kill:#e08a8a; --chip:#2b251e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Georgia,"Iowan Old Style",serif}
+main{max-width:920px;margin:0 auto;padding:32px 16px 64px}
+header{display:flex;gap:28px;align-items:center;flex-wrap:wrap;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:28px}
+header .t{flex:1 1 380px;min-width:0}
+h1{font-size:30px;line-height:1.2;margin:0 0 8px}
+h2{font-size:20px;margin:36px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+.sub{color:var(--muted);margin:0}
+.meta{font:13px/1.4 ui-monospace,Menlo,monospace;color:var(--muted);margin-top:12px}
+.seal{flex:0 0 auto;width:170px;height:170px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:12px 0}
+.flow{font:13px/1.6 ui-monospace,Menlo,monospace;overflow-x:auto;white-space:pre;background:var(--chip);border-radius:8px;padding:12px}
+ul{padding-left:20px;margin:6px 0}
+li{margin:4px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.tag{display:inline-block;font:12px/1 ui-monospace,Menlo,monospace;padding:4px 8px;border-radius:99px;background:var(--chip);color:var(--accent);margin-right:6px}
+.kill li::marker{content:"✕  ";color:var(--kill)}
+.lock li::marker{content:"◆  ";color:var(--ok)}
+.weak li::marker{content:"▲  ";color:var(--warn)}
+.persona{display:flex;gap:12px;align-items:flex-start}
+.persona .ic{font-size:26px;line-height:1}
+.persona b{display:block}
+.persona i{color:var(--muted);font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:normal}
+footer{color:var(--muted);font-size:13px;margin-top:40px;text-align:center}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <svg class="seal" viewBox="0 0 200 200" role="img" aria-label="Wax seal: HARDENED">
+    <defs>
+      <radialGradient id="wax" cx="40%" cy="35%" r="70%">
+        <stop offset="0" stop-color="var(--seal-2)"/>
+        <stop offset="1" stop-color="var(--seal)"/>
+      </radialGradient>
+      <path id="ring" d="M100,100 m-62,0 a62,62 0 1,1 124,0 a62,62 0 1,1 -124,0"/>
+    </defs>
+    <path fill="url(#wax)" d="M100 8c9 0 13 8 21 10s16-3 22 3 3 15 8 21 14 9 15 18-6 13-6 21 9 14 6 22-12 9-17 15-4 16-12 20-15-2-23 0-14 10-23 9-12-9-20-12-17 0-22-7-1-15-6-22-14-8-14-17 8-12 9-20-5-16 1-22 15-3 22-8 6-15 15-17 13 5 21 3 11-15 23-15z"/>
+    <circle cx="100" cy="100" r="70" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="2"/>
+    <circle cx="100" cy="100" r="50" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="1.5"/>
+    <text font-family="Georgia,serif" font-size="11" letter-spacing="3" fill="#fff" fill-opacity=".85"><textPath href="#ring" startOffset="2%">FORGED · D2T FACTORY · 2026-10-23 · FORGED · D2T FACTORY ·</textPath></text>
+    <text x="100" y="96" text-anchor="middle" font-family="Georgia,serif" font-weight="bold" font-size="19" fill="#fff" letter-spacing="1">HARDENED</text>
+    <text x="100" y="118" text-anchor="middle" font-family="Georgia,serif" font-size="20" fill="#fff">⚒</text>
+  </svg>
+  <div class="t">
+    <h1>POC Software Factory — a Claude Code plugin</h1>
+    <p class="sub">A slimmed-down BMad for fast POCs and 1.5–2h interview exercises. The point is to show d2t's mastery of <em>driving</em> Claude Code. The factory is the evidence, and the human's decisions are what the audience watches.</p>
+    <div class="meta">Outcome: HARDENED · 58 memlog entries · Session goal: define the factory process stage by stage</div>
+  </div>
+</header>
+
+<h2>The process</h2>
+<div class="card">
+<div class="flow">/factory [task]
+  INTAKE (brainstorm) ──┬─ FRAME  (greenfield) ─┐
+                        └─ RECON  (brownfield) ─┴─► SCAFFOLD (run contract)
+  ─► SPEC ∥ DESIGN ─► [gate] ─► SLICE PLAN ─► [gate]
+  ─► BUILD LOOP per slice (builder ⇄ reviewers, pipelined, ≤2 rounds)
+  ─► WRAP ─► [human merge OK]          budget clock @ ~1:20 → "cut & wrap?"</div>
+</div>
+
+<h2>Locked decisions</h2>
+<div class="grid">
+  <div class="card lock"><span class="tag">loop</span>
+    <ul>
+      <li>Conductor <code>/factory</code>; resumes from disk; per-stage skills; <code>rework</code></li>
+      <li>One file per agent, verdict on the first line</li>
+      <li>Builder on Opus, resumed; reviewers on Sonnet; reviews pipelined</li>
+      <li>One dev server per run, shared by the reviewers</li>
+      <li>Spec fits one screen; every acceptance criterion carries its own check</li>
+    </ul></div>
+  <div class="card lock"><span class="tag">reviewers</span>
+    <ul>
+      <li>No nitpicks. Each finding needs a concrete failure scenario.</li>
+      <li>Categories: bug, spec miss, security, breakage</li>
+      <li>code always; security, ux, a11y and ui chosen per slice by tag</li>
+      <li>ux, a11y and ui test the running app; ui compares against a reference</li>
+      <li>Designer: a single <code>design.md</code>, inherit or invent, at most one question</li>
+    </ul></div>
+  <div class="card lock"><span class="tag">human</span>
+    <ul>
+      <li>Escalates only for: scope change · irreversible or outward-facing action · not converging · taste</li>
+      <li>Two planned gates: spec+design, then the slice plan</li>
+      <li>Every merge needs your OK; the factory resolves conflicts and re-tests first</li>
+    </ul></div>
+  <div class="card lock"><span class="tag">truth</span>
+    <ul>
+      <li>Hooks record facts; a state-machine CLI records meaning</li>
+      <li>A JSONL log for each writer, kept in <code>~/.factory</code>, outside the repo</li>
+      <li>The dashboard shows each item as <b>claimed</b> or <b>verified</b>. It's our own build, with no Docker.</li>
+      <li>Parallelism is shown by <b>replaying</b> a recorded run, never live</li>
+    </ul></div>
+</div>
+
+<h2>Build order</h2>
+<div class="card">
+<table>
+<tr><th>#</th><th>Increment</th></tr>
+<tr><td>0</td><td>Spike: env vars reaching hooks · plugin agent_type naming · sandbox writes · agent-browser vs Playwright MCP</td></tr>
+<tr><td>1</td><td>Skeleton: brownfield, single run, spec → builder → reviewer-code → human OK</td></tr>
+<tr><td>2</td><td>Truth layer + dashboard</td></tr>
+<tr><td>3</td><td>Full loop, charter, all reviewers, designer, slices</td></tr>
+<tr><td>4</td><td>Replay</td></tr>
+<tr><td>5</td><td>Worktrees and parallel runs (to record replays) + greenfield path</td></tr>
+</table>
+</div>
+
+<h2>Rejected, and why</h2>
+<div class="card kill"><ul>
+  <li><b>Forking agents-observe:</b> it needs Docker, is built server-first, and doesn't track pipeline stages. We build our own and borrow its patterns.</li>
+  <li><b>OpenTelemetry as the dashboard source:</b> it can't name custom subagents and doesn't know which worktree an event came from.</li>
+  <li><b>Putting the factory's tooling in the project's dependencies:</b> it would pollute the interviewer's repo.</li>
+  <li><b>An approver agent that merges by itself:</b> every merge needs the human's OK.</li>
+  <li><b>A "notes" tier for minor findings:</b> no nitpicks, not even logged.</li>
+  <li><b>Two separate pipelines:</b> one pipeline that forks only at the start.</li>
+  <li><b><code>.factory/</code> state inside the repo:</b> breaks under the sandbox, <code>git clean</code>, and bare-repo layouts.</li>
+  <li><b>Running parallel worktrees live in an interview:</b> too risky; replay a recorded run instead.</li>
+  <li><b>A heavyweight BMad UX stage:</b> it can't fit in a 2-hour budget.</li>
+</ul></div>
+
+<h2>Weak points that survived scrutiny</h2>
+<div class="card weak"><ul>
+  <li><b>The timing is marginal.</b> The tabletop simulation finishes at about 1:50–2:00 with roughly zero slack, and 1:30 doesn't fit. The numbers are estimates, so do timed dry runs on a sample repo.</li>
+  <li><b>Repo setup is the biggest time sink.</b> Interview repos often need a database or env vars; SCAFFOLD pages the human, but the minutes are still lost.</li>
+  <li><b>The interview date is unknown,</b> so nobody has checked whether the build order fits the deadline.</li>
+  <li><b>Accepted on trust in the research.</b> d2t must be able to explain <i>why the dashboard is truthful</i> in their own words.</li>
+  <li><b>Overlap with ZazenCodes.</b> Credit it openly and lead with the differences: brainstorm first, works on a repo it has never seen, slices, a human OK on every merge, and a dashboard that can prove what it shows.</li>
+</ul></div>
+
+<h2>Who pressure-tested it</h2>
+<div class="grid">
+  <div class="card persona"><span class="ic">📋</span><div><b>John · PM</b><i>Showed that the fast-POC goal and the interview goal pulled against each other.</i></div></div>
+  <div class="card persona"><span class="ic">🏗️</span><div><b>Winston · Architect</b><i>One pipeline, not two. Keep project dependencies and factory tooling apart. Three ways to orchestrate.</i></div></div>
+  <div class="card persona"><span class="ic">💻</span><div><b>Amelia · Dev</b><i>Reviewers must prove each finding. Mechanical fixes for ports and installs. Build a walking skeleton first.</i></div></div>
+  <div class="card persona"><span class="ic">🎨</span><div><b>Sally · UX</b><i>Can't review a flow without running the app. Window vs. cockpit. The designer's job is consistency.</i></div></div>
+  <div class="card persona"><span class="ic">😤</span><div><b>Grumbal · Adversary</b><i>Endless review loops, a dashboard fed by the LLM's own diary, and a factory bigger than the POCs it builds.</i></div></div>
+  <div class="card persona"><span class="ic">🎯</span><div><b>Yui · Craftsman</b><i>reviewer-ui needs a reference to compare against. Build, don't fork.</i></div></div>
+  <div class="card persona"><span class="ic">🧑‍💼</span><div><b>Priya Raman · hiring manager</b> <span class="tag">generated</span><i>"What did you cut and why?" "How do you know it isn't lying?" "I watched that video too."</i></div></div>
+  <div class="card persona"><span class="ic">🪂</span><div><b>Teodor Vasić · contractor</b> <span class="tag">generated</span><i>On someone else's repo, run their tests before writing any code.</i></div></div>
+  <div class="card persona"><span class="ic">🚨</span><div><b>Okafor Lindqvist · SRE</b> <span class="tag">generated</span><i>Escalations work like a paging policy, not a feeling.</i></div></div>
+  <div class="card persona"><span class="ic">🔬</span><div><b>Kenji Arbós · QA lead</b> <span class="tag">generated</span><i>a11y has objective failures; ui is mostly taste.</i></div></div>
+  <div class="card persona"><span class="ic">⏱️</span><div><b>Marisol Tkachenko · hackathon judge</b> <span class="tag">generated</span><i>Tie a finding's severity to what the POC is for. One design question at most.</i></div></div>
+  <div class="card persona"><span class="ic">🕰️</span><div><b>Rafael Moreau · interviewer</b> <span class="tag">generated</span><i>The panicked <code>/clear</code> at minute 70: it must recover from disk.</i></div></div>
+  <div class="card persona"><span class="ic">📡</span><div><b>Hanne Søberg · observability eng.</b> <span class="tag">generated</span><i>Record the actor with instrumentation; don't rely on it reporting on itself.</i></div></div>
+  <div class="card persona"><span class="ic">🔎</span><div><b>Two research agents</b><i>Read the Claude Code hook and telemetry docs, surveyed existing observability tools, and attacked the event-log design.</i></div></div>
+</div>
+
+<footer>bmad-forge-idea · _bmad-output/forge/poc-factory-plugin · distilled in forged-idea.md</footer>
+</main>
+</body>
+</html>

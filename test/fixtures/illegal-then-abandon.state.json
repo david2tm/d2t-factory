@@ -1,0 +1,59 @@
+{
+  "run_id": "add-login-page-q7k2",
+  "task": "add login page",
+  "repo_hash": "abc123def456",
+  "base_sha": "base000",
+  "branch": "factory/add-login-page-q7k2",
+  "greenfield": false,
+  "phase": "ABANDONED",
+  "abandoned_from": "ORIENT",
+  "holder": "11111111-2222-4333-8444-555555555555",
+  "steps": {
+    "01JQ0000000000000000000004": {
+      "id": "01JQ0000000000000000000004",
+      "kind": "spawn",
+      "stage": "RECON",
+      "attempt": 1,
+      "state": "claimed",
+      "role": "recon",
+      "agent": "d2t-factory:recon",
+      "issued_seq": 3,
+      "claimed_by": "11111111-2222-4333-8444-555555555555"
+    }
+  },
+  "step_order": [
+    "01JQ0000000000000000000004"
+  ],
+  "slices": {},
+  "slice_order": [],
+  "checks": [],
+  "asks": {},
+  "voided": [],
+  "cut_decided": false,
+  "merge_approved": false,
+  "merged_sha": null,
+  "seq": 6,
+  "last_ts": "2026-10-24T09:00:09.000Z",
+  "rejected": [
+    {
+      "id": "01JQ0000000000000000000002",
+      "kind": "gate_2_passed",
+      "reason": "gate_2_passed in INTAKE"
+    },
+    {
+      "id": "01JQ0000000000000000000006",
+      "kind": "step_claimed",
+      "reason": "step 01JQ0000000000000000000004 is claimed"
+    },
+    {
+      "id": "01JQ0000000000000000000007",
+      "kind": "merged",
+      "reason": "merged in ORIENT"
+    },
+    {
+      "id": "01JQ0000000000000000000009",
+      "kind": "stage_completed",
+      "reason": "run is ABANDONED"
+    }
+  ]
+}

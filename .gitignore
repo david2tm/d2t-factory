@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+*.log
+
+# spike run scratch output
+spikes/.work/
+
+# Claude Code local state
+.claude/.cc-writes/
+.claude/settings.local.json

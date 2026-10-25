@@ -1,0 +1,126 @@
+- id: "0-1"
+  title: Run the increment-0 spikes
+  description: >-
+    De-risks CAP-9, CAP-12, CAP-14 by running each spike in ARCHITECTURE-SPINE.md
+    Open Questions and recording pass or fallback per spike (build-order.md).
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Spikes only, no product code. Use the spine's Open Questions table as the
+    pass criteria; record each verdict and any fallback taken.
+
+- id: "1-1"
+  title: Plugin skeleton and functional core
+  description: >-
+    Plugin layout, event envelope, JSONL store, locks, and the pure reducer /
+    state machine behind CAP-14, plus `factory setup` and the bin shim.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    Governing decisions: AD-1 to AD-5, AD-19, AD-28, AD-29, AD-35. Test the
+    reducer with fixture JSONL via node:test.
+
+- id: "1-2"
+  title: Factory CLI driver
+  description: >-
+    `factory start/next/claim/done/decide`, session binding, and resume
+    resolution so the CLI owns sequencing and legality (CAP-1, CAP-14).
+  invoke_dev_with: "Governing decisions: AD-3, AD-6, AD-24, AD-25, AD-26."
+
+- id: "1-3"
+  title: Minimum truth-slice hooks
+  description: >-
+    Human-command capture, SessionStart nudge, Stop block, write guard, and fact
+    hooks so decisions and claims are hook-observed (CAP-14, truth-layer.md).
+  spec_checkpoint: true
+  invoke_dev_with: "Governing decisions: AD-6, AD-7, AD-12, AD-13, AD-14, AD-31, AD-32."
+
+- id: "1-4"
+  title: Brownfield front half of the pipeline
+  description: >-
+    Stub intake, RECON, SCAFFOLD with run contract and checks, CLI-created
+    worktree, spec with gate 1, and a single-slice plan with gate 2 (CAP-3, 4, 5, 12).
+  invoke_dev_with: >-
+    Governing decisions: AD-8, AD-9, AD-10, AD-15, AD-27. Stub intake still
+    requires `/factory approve intake`.
+
+- id: "1-5"
+  title: Build, review, wrap, and record
+  description: >-
+    Builder with reviewer-code, WRAP merge only on human OK, and `factory record`
+    at WRAP, completing the walking skeleton (CAP-8, CAP-13, CAP-16 record).
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Ends increment 1: must be demoable end to end on a real brownfield repo.
+    Governing decisions: AD-8, AD-11, AD-18, AD-30.
+
+- id: "2-1"
+  title: Dashboard server and projection
+  description: >-
+    Singleton local server, rebuildable SQLite cache, GET API, and SSE stream
+    serving the claimed-vs-verified projection (CAP-15).
+  invoke_dev_with: "Governing decisions: AD-16, AD-21, AD-23."
+
+- id: "2-2"
+  title: Dashboard board UI
+  description: >-
+    Svelte board with run lanes, columns, cards, claim chips, evidence drawer,
+    placeholder sprites, and motion (CAP-15, DESIGN.md, EXPERIENCE.md).
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Follow DESIGN.md, EXPERIENCE.md and the mockups; where they conflict with
+    ARCHITECTURE-SPINE.md (Overrides of Upstream Documents), the spine wins.
+
+- id: "3-1"
+  title: Full intake, budget clock, and cut gate
+  description: >-
+    Conversational INTAKE with limit, time box, UI-free and reviewer overrides,
+    plus the never-pausing budget clock and live cut gate (CAP-2, CAP-11).
+  invoke_dev_with: "Governing decisions: AD-17, AD-27, AD-34."
+
+- id: "3-2"
+  title: Designer in parallel with spec
+  description: >-
+    Designer in inherit or invent mode running alongside SPEC, approved at
+    gate 1 (CAP-6, pipeline-stages.md design.md format).
+  invoke_dev_with: "Governing decisions: AD-11 (question block), AD-27."
+
+- id: "3-3"
+  title: Full slice plan and reviewer roster
+  description: >-
+    Multi-slice plan with tags and dependency marks, roster derivation, all
+    reviewers under the charter, and the browser driver (CAP-7, CAP-9, review-policy.md).
+  invoke_dev_with: "Governing decisions: AD-11, AD-22, AD-27."
+
+- id: "3-4"
+  title: Full build loop and escalations
+  description: >-
+    Multi-slice build with pipelined diff reviews, retrigger rounds, the closed
+    ask list, and rework/rerun (CAP-8, CAP-10, review-policy.md).
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Governing decisions: AD-17, AD-30, AD-33, AD-34."
+
+- id: "4-1"
+  title: Replay engine for single-run recordings
+  description: >-
+    Dashboard replay that folds a recorded run through the same reducer on a
+    playback clock, with redacted transcripts (CAP-16 single-run).
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Governing decisions: AD-14, AD-18, AD-32. Recordings from increments 1-3
+    are the regression fixtures.
+
+- id: "5-1"
+  title: Parallel runs and multi-run recording
+  description: >-
+    Concurrent runs in one repo with atomic claims, per-run ports, shared-DB
+    refusal, resume list, and multi-run recording (CAP-12, CAP-16 multi-run).
+  invoke_dev_with: "Governing decisions: AD-15, AD-20, AD-25."
+
+- id: "5-2"
+  title: Greenfield path
+  description: >-
+    `git init` at start, FRAME, invent-mode design, and a project-owned test
+    runner so every later stage runs unchanged (CAP-3, CAP-4, CAP-6).
+  done_checkpoint: true
+  invoke_dev_with: "Governing decisions: AD-9, AD-27."

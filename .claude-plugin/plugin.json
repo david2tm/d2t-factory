@@ -1,0 +1,13 @@
+{
+  "name": "d2t-factory",
+  "version": "0.1.0",
+  "description": "A software factory for Claude Code: a CLI-driven pipeline with hook-observed human gates.",
+  "userConfig": {
+    "dashboard_port": {
+      "type": "number",
+      "title": "Dashboard port",
+      "description": "Local port for the read-only factory dashboard.",
+      "default": 4870
+    }
+  }
+}

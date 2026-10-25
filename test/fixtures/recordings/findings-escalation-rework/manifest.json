@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "name": "findings-escalation-rework",
+  "recorded_at": "2026-10-25T12:00:00.000Z",
+  "plugin_version": "0.1.0",
+  "runs": [
+    {
+      "repo_hash": "abc123def456",
+      "run_id": "add-login-page-q7k2"
+    }
+  ]
+}

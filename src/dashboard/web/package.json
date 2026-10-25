@@ -1,0 +1,16 @@
+{
+  "name": "d2t-factory-dashboard-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The read-only dashboard board (2-2). Built by Vite into the committed dashboard/dist.",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "svelte": "5.57.2",
+    "vite": "8.3.5"
+  }
+}

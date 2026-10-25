@@ -1,0 +1,2 @@
+STATUS: DONE
+Used API_TOKEN=[REDACTED] from .env

@@ -1,0 +1,27 @@
+#!/bin/sh
+# factory CLI shim (AD-19). Finds the plugin root from this file's real path and runs the CLI on the
+# Node recorded by `factory setup`, falling back to `node` on PATH. The recorded Node keeps a target
+# repo's version manager (.nvmrc, Volta, asdf) from swapping Node under the hooks.
+# The FACTORY_HOME default repeats src/store/paths.ts: the shim has to find Node before Node runs.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+root=$(cd "$(dirname "$self")/.." && pwd -P)
+home=${FACTORY_HOME:-$HOME/.factory}
+node=$home/node
+[ -x "$node" ] || node=node
+# `factory hook <Event>` (AD-13) runs src/hooks, never src/cli (adapters don't import each other).
+# A hook exits 0 and does nothing on a machine without the factory home or without Node.
+if [ "${1-}" = hook ]; then
+  shift
+  [ -d "$home" ] || exit 0
+  command -v "$node" >/dev/null 2>&1 || exit 0
+  exec "$node" --disable-warning=ExperimentalWarning "$root/src/hooks/bootstrap.mjs" "$@"
+fi
+# 22.x prints an ExperimentalWarning for type stripping and node:sqlite.
+exec "$node" --disable-warning=ExperimentalWarning "$root/src/cli/bootstrap.mjs" "$@"

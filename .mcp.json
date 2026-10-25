@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "playwright-ux": { "command": "npx", "args": ["-y", "@playwright/mcp@0.0.83", "--isolated", "--headless", "--output-dir", "${HOME}/.factory/playwright/reviewer-ux"] },
+    "playwright-a11y": { "command": "npx", "args": ["-y", "@playwright/mcp@0.0.83", "--isolated", "--headless", "--output-dir", "${HOME}/.factory/playwright/reviewer-a11y"] },
+    "playwright-ui": { "command": "npx", "args": ["-y", "@playwright/mcp@0.0.83", "--isolated", "--headless", "--output-dir", "${HOME}/.factory/playwright/reviewer-ui"] }
+  }
+}

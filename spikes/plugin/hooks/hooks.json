@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "UserPromptSubmit":    [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "UserPromptSubmit"] }] }],
+    "UserPromptExpansion": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "UserPromptExpansion"] }] }],
+    "Stop":                [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "Stop"] }] }],
+    "SessionStart":        [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "SessionStart"] }] }],
+    "PreToolUse":          [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "PreToolUse"] }] }],
+    "SubagentStart":       [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "SubagentStart"], "async": true }] }],
+    "SubagentStop":        [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "SubagentStop"], "async": true }] }],
+    "PostToolUse":         [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "PostToolUse"], "async": true }] }],
+    "PostToolUseFailure":  [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "PostToolUseFailure"], "async": true }] }],
+    "SessionEnd":          [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "SessionEnd"], "async": true }] }],
+    "Notification":        [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "Notification"], "async": true }] }],
+    "PermissionRequest":   [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "PermissionRequest"], "async": true }] }],
+    "StopFailure":         [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "StopFailure"], "async": true }] }],
+    "CwdChanged":          [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/hook.ts", "CwdChanged"], "async": true }] }]
+  }
+}

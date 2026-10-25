@@ -1,0 +1,171 @@
+/* DESIGN.md tokens as CSS custom properties (colors, type, radii, spacing), plus the board's
+   global base: system font stacks only, dark only, the 2px holo focus ring, sprite palette fills,
+   shared keyframes and the reduce-motion switch. Hex values live only here. */
+:root {
+  /* Space */
+  --space-0: #04060f;
+  --space-1: #070c1d;
+  --space-2: #0d1530;
+  --space-3: #142048;
+  --card-top: #17234d;
+  --card-bottom: #0e1738;
+  --card-edge: #2e3d73;
+  --line: #26345f;
+  --line-strong: #33427a;
+  --nebula-violet: #785aff;
+  /* Ink */
+  --text: #eaf2ff;
+  --text-2: #b4c2e0;
+  --text-3: #8a9bc2;
+  /* Holo: agents + CLAIMED */
+  --holo: #5ee7ff;
+  --holo-2: #1f8fb8;
+  --holo-text: #bff4ff;
+  --holo-text-2: #9edff0;
+  --holo-text-3: #c9f7ff;
+  --on-holo: #04121a;
+  --holo-a1: #5ee7ff14;
+  --holo-a2: #5ee7ff38;
+  --holo-a3: #5ee7ff80;
+  /* Republic gold: everything d2t */
+  --gold: #f6c64a;
+  --gold-2: #b07f22;
+  --gold-hi: #ffe08a;
+  --gold-ink: #1a1204;
+  --gold-a1: #f6c64a12;
+  --gold-a2: #f6c64a33;
+  --gold-a3: #f6c64a8c;
+  --needs-surface-top: #362a10;
+  --needs-surface-bottom: #0f1121;
+  --needs-text: #fff6dd;
+  --needs-text-2: #e9dcc0;
+  --needs-text-3: #d8c48e;
+  --needs-chip-ink: #f3dfa8;
+  --needs-wash-top: #f6c64a21;
+  --needs-wash-bottom: #f6c64a0d;
+  --needs-edge: #f6c64a47;
+  --needs-card-edge: #f6c64abf;
+  /* Danger only */
+  --danger: #ff6a3d;
+  --danger-a: #ff6a3d24;
+  --danger-text: #ffc2ad;
+  --on-danger: #1d0700;
+  /* Amber: budget pressure */
+  --amber: #ff9a2e;
+  --amber-text: #ffd2a1;
+  /* Role colors (who, never state) */
+  --role-d2t: #f6c64a;
+  --role-builder: #9aa6bf;
+  --role-designer: #a487ff;
+  --role-reviewer-code: #8cc084;
+  --role-reviewer-security: #e5283f;
+  --role-reviewer-security-text: #ff9aa7;
+  --role-reviewer-ux: #ff8fb1;
+  --role-reviewer-a11y: #dfe8f7;
+  --role-reviewer-ui: #3fcfa6;
+  /* Shared sprite palette */
+  --sprite-void: #0a0e1a;
+  --sprite-navy: #1b2440;
+  --sprite-indigo: #33427a;
+  --sprite-white: #eef4ff;
+  --sprite-steel: #9aa6bf;
+  --sprite-slate: #5a6580;
+  --sprite-skin-light: #f2c7a0;
+  --sprite-skin-mid: #c38a64;
+  --sprite-brown: #7a4e2c;
+  --sprite-brown-dark: #4a2d18;
+  --sprite-gold: #f6c64a;
+  --sprite-gold-dark: #b07f22;
+  --sprite-holo: #5ee7ff;
+  --sprite-holo-dark: #1f8fb8;
+  --sprite-violet: #a487ff;
+  --sprite-crimson: #e5283f;
+  --sprite-teal: #3fcfa6;
+  --sprite-pink: #ff8fb1;
+  --sprite-sage: #8cc084;
+  --sprite-moss: #4f7a4a;
+
+  /* Type */
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Radii */
+  --r-xs: 2px;
+  --r-sm: 3px;
+  --r-md: 4px;
+  --r: 6px;
+  --r-inset: 7px;
+  --r-lg: 8px;
+  --r-xl: 10px;
+  --r-2xl: 14px;
+  --r-full: 9999px;
+
+  /* Spacing */
+  --s-1: 4px;
+  --s-2: 6px;
+  --s-3: 8px;
+  --s-4: 10px;
+  --s-5: 12px;
+  --s-6: 14px;
+  --s-7: 16px;
+  --s-8: 18px;
+  --s-9: 20px;
+  --board-gutter: 16px;
+  --column-gap: 10px;
+  --card-gap: 10px;
+  --lane-gap: 18px;
+  --topbar-height: 64px;
+  --replay-height: 86px;
+  --drawer-width: 320px;
+  --viewport-target: 1440px;
+  --col-backlog: 160px;
+  --col-in-progress: 196px;
+  --col-in-review: 250px;
+  --col-needs-you: 272px;
+  --col-done: 170px;
+  /* The five columns keep their widths as minimums and share any extra width in proportion. */
+  --cols: minmax(var(--col-backlog), 160fr) minmax(var(--col-in-progress), 196fr) minmax(var(--col-in-review), 250fr) minmax(var(--col-needs-you), 272fr) minmax(var(--col-done), 170fr);
+
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--space-0);
+  color: var(--text);
+  font: 400 14px/1.45 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+code, .mono { font-family: var(--mono); }
+
+/* Every control: a 2px holo focus ring at 2px offset. */
+:focus-visible { outline: 2px solid var(--holo); outline-offset: 2px; }
+:focus:not(:focus-visible) { outline: none; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Pixel art: nearest-neighbor, whole-number scale. */
+svg.spr, svg.glyph { display: block; flex: none; image-rendering: pixelated; shape-rendering: crispEdges; }
+.px-k { fill: var(--sprite-void); } .px-n { fill: var(--sprite-navy); } .px-i { fill: var(--sprite-indigo); }
+.px-w { fill: var(--sprite-white); } .px-s { fill: var(--sprite-steel); } .px-l { fill: var(--sprite-slate); }
+.px-p { fill: var(--sprite-skin-light); } .px-m { fill: var(--sprite-skin-mid); } .px-b { fill: var(--sprite-brown); }
+.px-d { fill: var(--sprite-brown-dark); } .px-g { fill: var(--sprite-gold); } .px-G { fill: var(--sprite-gold-dark); }
+.px-h { fill: var(--sprite-holo); } .px-H { fill: var(--sprite-holo-dark); } .px-v { fill: var(--sprite-violet); }
+.px-c { fill: var(--sprite-crimson); } .px-t { fill: var(--sprite-teal); } .px-P { fill: var(--sprite-pink); }
+.px-e { fill: var(--sprite-sage); } .px-o { fill: var(--sprite-moss); }
+
+/* Shared ambient keyframes. */
+@keyframes flicker { 0%, 100% { opacity: 1; } 4% { opacity: .55; } 6% { opacity: 1; } 38% { opacity: .92; } 40% { opacity: .6; } 42% { opacity: 1; } 71% { opacity: .85; } 73% { opacity: 1; } }
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes sheen { 0%, 70% { transform: translateX(-120%); } 85%, 100% { transform: translateX(120%); } }
+
+/* Reduce motion (toggle or OS): all non-essential motion stops; state still changes instantly. */
+[data-motion="reduce"] *, [data-motion="reduce"] *::before, [data-motion="reduce"] *::after {
+  animation: none !important;
+  transition: none !important;
+}

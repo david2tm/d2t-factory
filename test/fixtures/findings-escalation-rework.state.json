@@ -1,0 +1,201 @@
+{
+  "run_id": "add-login-page-q7k2",
+  "task": "add login page",
+  "repo_hash": "abc123def456",
+  "base_sha": "base000",
+  "branch": "factory/add-login-page-q7k2",
+  "greenfield": false,
+  "phase": "BUILD",
+  "abandoned_from": null,
+  "holder": "11111111-2222-4333-8444-555555555555",
+  "steps": {
+    "01JQ0000000000000000000004": {
+      "id": "01JQ0000000000000000000004",
+      "kind": "enter_worktree",
+      "stage": "SCAFFOLD",
+      "attempt": 1,
+      "state": "verified",
+      "output_path": "/x/artifacts/steps/enter_worktree/out.md",
+      "issued_seq": 4,
+      "claimed_by": "11111111-2222-4333-8444-555555555555"
+    },
+    "01JQ0000000000000000000008": {
+      "id": "01JQ0000000000000000000008",
+      "kind": "spawn",
+      "stage": "SCAFFOLD",
+      "attempt": 1,
+      "state": "verified",
+      "role": "scaffolder",
+      "agent": "d2t-factory:scaffolder",
+      "agent_id": "agent-scaffolder",
+      "output_path": "/x/artifacts/steps/scaffolder/out.md",
+      "issued_seq": 8,
+      "claimed_by": "11111111-2222-4333-8444-555555555555"
+    },
+    "01JQ000000000000000000000C": {
+      "id": "01JQ000000000000000000000C",
+      "kind": "spawn",
+      "stage": "SPEC",
+      "attempt": 1,
+      "state": "verified",
+      "role": "spec-writer",
+      "agent": "d2t-factory:spec-writer",
+      "agent_id": "agent-spec-writer",
+      "output_path": "/x/artifacts/steps/spec-writer/out.md",
+      "issued_seq": 12,
+      "claimed_by": "11111111-2222-4333-8444-555555555555"
+    },
+    "01JQ000000000000000000000J": {
+      "id": "01JQ000000000000000000000J",
+      "kind": "spawn",
+      "stage": "SLICE_PLAN",
+      "attempt": 1,
+      "state": "verified",
+      "role": "slicer",
+      "agent": "d2t-factory:slicer",
+      "agent_id": "agent-slicer",
+      "output_path": "/x/artifacts/steps/slicer/out.md",
+      "issued_seq": 18,
+      "claimed_by": "11111111-2222-4333-8444-555555555555"
+    },
+    "01JQ000000000000000000000S": {
+      "id": "01JQ000000000000000000000S",
+      "kind": "spawn",
+      "stage": "BUILD",
+      "attempt": 1,
+      "state": "verified",
+      "role": "builder",
+      "agent": "d2t-factory:builder",
+      "agent_id": "agent-builder",
+      "slice": "S1",
+      "output_path": "/x/artifacts/steps/builder/out.md",
+      "issued_seq": 25,
+      "claimed_by": "11111111-2222-4333-8444-555555555555",
+      "sha": "b1d0000"
+    },
+    "01JQ000000000000000000000X": {
+      "id": "01JQ000000000000000000000X",
+      "kind": "spawn",
+      "stage": "BUILD",
+      "attempt": 1,
+      "state": "verified",
+      "role": "reviewer-code",
+      "agent": "d2t-factory:reviewer-code",
+      "agent_id": "agent-reviewer-code",
+      "slice": "S1",
+      "output_path": "/x/artifacts/steps/reviewer-code/out.md",
+      "issued_seq": 29,
+      "claimed_by": "11111111-2222-4333-8444-555555555555",
+      "verdict": "FINDINGS"
+    },
+    "01JQ0000000000000000000011": {
+      "id": "01JQ0000000000000000000011",
+      "kind": "resume",
+      "stage": "BUILD",
+      "attempt": 1,
+      "state": "reissued",
+      "role": "builder",
+      "agent": "d2t-factory:builder",
+      "agent_id": "agent-builder",
+      "slice": "S1",
+      "issued_seq": 33,
+      "claimed_by": "11111111-2222-4333-8444-555555555555",
+      "sha": "b2d0000"
+    },
+    "01JQ0000000000000000000ZZZ": {
+      "id": "01JQ0000000000000000000ZZZ",
+      "kind": "resume",
+      "stage": "BUILD",
+      "attempt": 2,
+      "state": "verified",
+      "role": "builder",
+      "agent": "d2t-factory:builder",
+      "agent_id": "agent-builder",
+      "slice": "S1",
+      "output_path": "/x/artifacts/steps/resume-2/out.md",
+      "issued_seq": 36,
+      "claimed_by": "11111111-2222-4333-8444-555555555555",
+      "sha": "b3d0000"
+    }
+  },
+  "step_order": [
+    "01JQ0000000000000000000004",
+    "01JQ0000000000000000000008",
+    "01JQ000000000000000000000C",
+    "01JQ000000000000000000000J",
+    "01JQ000000000000000000000S",
+    "01JQ000000000000000000000X",
+    "01JQ0000000000000000000011",
+    "01JQ0000000000000000000ZZZ"
+  ],
+  "slices": {
+    "S1": {
+      "id": "S1",
+      "title": "slice S1",
+      "deps": [],
+      "state": "BUILDING",
+      "rounds": 1,
+      "escalated_from": "BUILDING"
+    },
+    "S2": {
+      "id": "S2",
+      "title": "slice S2",
+      "deps": [],
+      "state": "CUT",
+      "rounds": 0
+    }
+  },
+  "slice_order": [
+    "S1",
+    "S2"
+  ],
+  "checks": [
+    {
+      "id": "01JQ000000000000000000000G",
+      "check": "spec.lint",
+      "exit_code": 0,
+      "basis_seq": 20,
+      "seq": 16
+    },
+    {
+      "id": "01JQ000000000000000000000P",
+      "check": "plan.lint",
+      "exit_code": 0,
+      "basis_seq": 26,
+      "seq": 22
+    },
+    {
+      "id": "01JQ000000000000000000001A",
+      "check": "contract.test",
+      "exit_code": 0,
+      "sha": "b3d0000",
+      "basis_seq": 50,
+      "seq": 42
+    }
+  ],
+  "asks": {
+    "01JQ0000000000000000000016": {
+      "id": "01JQ0000000000000000000016",
+      "card": {
+        "type": "escalation",
+        "title": "Builder stuck on S1",
+        "commands": [
+          "/factory rule E1 continue",
+          "/factory rule E1 close"
+        ]
+      },
+      "slice": "S1",
+      "escalation": "E1",
+      "open": false
+    }
+  },
+  "voided": [
+    "01JQ000000000000000000001A"
+  ],
+  "cut_decided": true,
+  "merge_approved": false,
+  "merged_sha": null,
+  "seq": 46,
+  "last_ts": "2026-10-24T09:00:46.000Z",
+  "rejected": []
+}
