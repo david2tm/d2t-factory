@@ -75,7 +75,7 @@ export function parseOutput(text: string, o: { role?: string } = {}): OutputResu
   let i = 1;
   let escalation: ParsedOutput['escalation'];
   if (value === 'ESCALATE') {
-    const m = /^([A-Za-z ]+): (\S.*)$/.exec((lines[1] ?? '').trimEnd());
+    const m = /^([A-Za-z -]+): (\S.*)$/.exec((lines[1] ?? '').trimEnd());
     if (!m || !(ESCALATION_LABELS as readonly string[]).includes(m[1])) {
       return { ok: false, error: `line 2 after ESCALATE must be \`<Label>: <one line>\` with a label in ${ESCALATION_LABELS.join(' | ')}` };
     }

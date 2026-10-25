@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { parseFindings, parseOutput, parseQuestion, parseScalar } from '../src/core/output.ts';
+import { ESCALATION_LABELS, parseFindings, parseOutput, parseQuestion, parseScalar } from '../src/core/output.ts';
 
 const ok = (text: string) => { const r = parseOutput(text); assert.ok(r.ok, r.ok ? '' : r.error); return r.value; };
 const bad = (text: string, re: RegExp) => { const r = parseOutput(text); assert.equal(r.ok, false); assert.match((r as { error: string }).error, re); };
@@ -23,6 +23,16 @@ test('VERDICT forms and ESCALATE with its label line', () => {
   assert.deepEqual(e.escalation, { label: 'Scaffold failed', line: 'npm install needs network' });
   assert.deepEqual(e.front, { port: 5100 });
   assert.equal(ok('STATUS: ESCALATE\nSpec ambiguity: two readings\nrest').body, 'rest');
+});
+
+test('every escalation label parses on line 2, hyphenated Non-convergence included (Scaffold failed as the scaffolder)', () => {
+  for (const label of ESCALATION_LABELS) {
+    const r = parseOutput(`STATUS: ESCALATE\n${label}: x\n`, { role: 'scaffolder' });
+    assert.ok(r.ok, `${label}: ${r.ok ? '' : r.error}`);
+    assert.deepEqual(r.value.escalation, { label, line: 'x' });
+  }
+  const v = parseOutput('VERDICT: ESCALATE\nNon-convergence: x\n', { role: 'reviewer-ui' });
+  assert.ok(v.ok && v.value.escalation?.label === 'Non-convergence');
 });
 
 test('parse failures name what is wrong', () => {

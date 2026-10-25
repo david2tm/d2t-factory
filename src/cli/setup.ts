@@ -44,6 +44,16 @@ export function mergeSettings(settings: Json, home: string): string[] {
   return changed;
 }
 
+// What setup cannot fix but the user must (the merge never touches these): with the sandbox on and
+// local binding off, the dashboard and the run's dev server cannot listen.
+export function settingsWarnings(settings: Json, file: string): string[] {
+  const sb = settings.sandbox as Json | undefined;
+  if (!sb || typeof sb !== 'object' || sb.enabled !== true) return [];
+  const net = sb.network as Json | undefined;
+  if (net && typeof net === 'object' && net.allowLocalBinding === true) return [];
+  return [`the sandbox is on but sandbox.network.allowLocalBinding is not true, so the dashboard and the run's dev server cannot listen on a local port (listen EPERM): set "sandbox": {"network": {"allowLocalBinding": true}} in ${file}`];
+}
+
 // `rename` is injectable so a test can fail only the rename onto settings.json.
 export function setup(_args: Args, rename = renameSync): Json {
   const home = factoryHome();
@@ -95,6 +105,7 @@ export function setup(_args: Args, rename = renameSync): Json {
     node_changed: nodeChanged,
     settings_file: file,
     settings_changed: changed,
+    warnings: settingsWarnings(settings, file),
     // AD-22 is open (spike 04): the browser driver for sandboxed reviewers isn't decided yet.
     browser: 'skipped: agent-browser install waits on the AD-22 decision',
   };

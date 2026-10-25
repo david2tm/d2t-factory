@@ -65,6 +65,11 @@ export const outFile = (repoHash: string, runId: string, stepId: string): string
 export const devserverPid = (repoHash: string, runId: string): string => join(runDir(repoHash, runId), 'devserver.pid');
 export const devserverLog = (repoHash: string, runId: string): string => join(runDir(repoHash, runId), 'devserver.log');
 
+// A running-app reviewer's Playwright output dir: .mcp.json's `--output-dir
+// ${HOME}/.factory/playwright/<role>`, so it follows the home dir, never FACTORY_HOME. Screenshots
+// are saved there by absolute path; `done` copies a step's into its step dir.
+export const playwrightDir = (role: string): string => join(homedir(), '.factory', 'playwright', role);
+
 // Machine-wide port claims (AD-20): `mkdir ports/<n>`, with the owning run id inside.
 export const portsDir = (): string => join(factoryHome(), 'ports');
 export const portDir = (n: number): string => join(portsDir(), String(n));

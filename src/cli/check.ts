@@ -3,7 +3,7 @@
 // background Bash. The step verifies whether the check passed or failed; the result is in
 // check_ran.exit_code and the projection in step_reported.output (AD-23).
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { acIds, planLint, readSpec, slicePlanEntries, specLint } from '../core/artifacts.ts';
@@ -16,10 +16,10 @@ import { rosterOf } from '../core/roster.ts';
 import { latestSlicePlan, latestSpec, uiReference } from '../core/verify.ts';
 import { loadRun, readRedactValues } from '../store/load-run.ts';
 import { withLock } from '../store/locks.ts';
-import { lockDir } from '../store/paths.ts';
+import { devserverLog, lockDir } from '../store/paths.ts';
 import type { Args } from './args.ts';
 import { appendAll, gateOrThrow, makeEvent } from './commit.ts';
-import { contractOf, devserverDown, devserverRunning, devserverUp, serverSpec } from './devserver.ts';
+import { contractOf, devserverDown, devserverRunning, devserverUp, serverAlive, serverSpec } from './devserver.ts';
 import { head, isAncestor, repoRoot, sha256 } from './git.ts';
 import { requireHolder, requireRun, requireSession } from './resolve.ts';
 import { reissueEvent } from './steps.ts';
@@ -46,12 +46,24 @@ async function httpOk(url: string): Promise<boolean> {
   }
 }
 
-function testCheck(state: RunState): Result {
-  const command = contractField(state, 'test');
-  if (!command || !state.worktree) return { exit_code: 1, log: 'no run contract test command', output: { error: 'no run contract test command' } };
+// The run contract's `test` or `install`, in the worktree. `install` runs only at SCAFFOLD.
+function contractCommand(state: RunState, k: 'test' | 'install'): Result {
+  const command = contractField(state, k);
+  if (!command || !state.worktree) return { exit_code: 1, log: `no run contract ${k} command`, output: { error: `no run contract ${k} command` } };
   const r = sh(command, state.worktree, state.port, CHECK_TIMEOUT_MS);
   return { exit_code: r.code, command, log: r.log, output: {} };
 }
+const testCheck = (state: RunState): Result => contractCommand(state, 'test');
+const installCheck = (state: RunState): Result => contractCommand(state, 'install');
+
+// The last lines the dev server wrote since `from` (a byte offset into devserver.log).
+function serverTail(hash: string, runId: string, from: number, lines = 20): string {
+  let text = '';
+  try { text = readFileSync(devserverLog(hash, runId)).subarray(from).toString('utf8'); } catch { return ''; }
+  const rows = text.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
+  return rows.length ? `devserver.log:\n${rows.slice(-lines).join('\n')}\n` : '';
+}
+const logSize = (hash: string, runId: string): number => { try { return statSync(devserverLog(hash, runId)).size; } catch { return 0; } };
 
 // Starts the dev server if it isn't running, then polls `health` until it passes, the server
 // dies, or HEALTH_TIMEOUT_MS passes. At BUILD (3-3) and WRAP the server is restarted first, so health
@@ -61,14 +73,20 @@ async function healthCheck(state: RunState, hash: string, runId: string, restart
   const spec = serverSpec(state);
   if (!command || !spec) return { exit_code: 1, log: 'no run contract health/start command', output: { error: 'no run contract health/start command' } };
   if (restart) await devserverDown(hash, runId);
+  const from = logSize(hash, runId);
   const up = await devserverUp(hash, runId, spec);
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-  let log = `dev server pid ${up.pid}${up.started ? ' started' : ' already running'} on port ${spec.port}\n`;
+  const log = `dev server pid ${up.pid}${up.started ? ' started' : ' already running'} on port ${spec.port}\n`;
+  // On failure the log holds what the dev server wrote, then the cause last, so the card's tail keeps it.
+  const fail = (error: string): Result => ({ exit_code: 1, command, log: `${log}${serverTail(hash, runId, up.started ? from : 0)}${error}\n`, output: { error } });
   for (;;) {
     const ok = /^https?:\/\//.test(command) ? await httpOk(command) : sh(command, spec.worktree, spec.port, 10_000).code === 0;
-    if (ok) return { exit_code: 0, command, log: log + 'health passed\n', output: { pid: up.pid } };
-    if (!devserverRunning(hash, runId)) return { exit_code: 1, command, log: log + 'the dev server exited\n', output: { error: 'the dev server exited' } };
-    if (Date.now() >= deadline) return { exit_code: 1, command, log: log + 'health timed out\n', output: { error: `health did not pass within ${HEALTH_TIMEOUT_MS} ms` } };
+    // The port answered: it is our server only while the pid we started (or found) still lives.
+    // devserverUp refused to spawn while anything else answered there.
+    if (ok && (await serverAlive(up.pid))) return { exit_code: 0, command, log: log + 'health passed\n', output: { pid: up.pid } };
+    if (ok) return fail(`the dev server exited; something else answers on port ${spec.port}`);
+    if (!devserverRunning(hash, runId)) return fail('the dev server exited');
+    if (Date.now() >= deadline) return fail(`health did not pass within ${HEALTH_TIMEOUT_MS} ms`);
     await sleep(HEALTH_POLL_MS);
   }
 }
@@ -118,6 +136,7 @@ export function mergedCheck(root: string, rev: string): Result {
 async function runOne(check: Check | undefined, run: ReturnType<typeof loadRun>, hash: string, runId: string, st?: Step, root?: string): Promise<Result> {
   switch (check) {
     case 'contract.test': return testCheck(run.state);
+    case 'contract.install': return installCheck(run.state);
     case 'contract.health': return healthCheck(run.state, hash, runId, st?.stage === 'WRAP' || st?.stage === 'BUILD');
     case 'git.merged': return mergedCheck(root ?? '', run.state.branch ?? '');
     case 'spec.lint': return specCheck(run.state);

@@ -195,16 +195,35 @@ function startScaffold(c: Ctx, state: RunState): AnyEvent[] {
   return [makeEvent(c.runId, 'stage_started', { stage: 'SCAFFOLD', port, worktree }, { corr: state.run_id! })];
 }
 
-// SCAFFOLD done: both checks verified → the inline git checks and one run per repo (AD-15: another
-// live run holding exclusive/ blocks any run; a run whose contract lists a shared service claims
-// it, and is blocked by a live run already past SCAFFOLD); then step_verified or the
-// scaffold_failure card naming every failure. A blocked run can only retry (once the other run
-// ends) or abandon: no accept. Greenfield (5-2): with nothing else failing, the CLI commits the
-// scaffolded project as `factory: scaffold (<step_id>)`; a scaffolder that created no project files
-// fails. A greenfield failure offers retry or abandon only.
+// What a failed check's log ends with, for its line on a card: the last 3 non-empty lines of its
+// (already redacted) log, without the `$ cmd` and `[exit N]` lines, joined with ` / `, at most
+// TAIL_MAX chars (the end kept). Empty when the log is missing or says nothing more.
+const TAIL_MAX = 240;
+export function logTail(text: string): string {
+  const rows = text.split('\n').map((l) => l.trim()).filter((l) => l && !/^\$ /.test(l) && !/^\[exit -?\d+\]$/.test(l));
+  const t = rows.slice(-3).join(' / ');
+  return t.length > TAIL_MAX ? `…${t.slice(-(TAIL_MAX - 1))}` : t;
+}
+function stepTail(st: Step): string {
+  if (!st.output_path) return '';
+  try { return logTail(readFileSync(st.output_path, 'utf8')); } catch { return ''; }
+}
+
+// SCAFFOLD done: the install verified, and (once it passed) health and test verified → the inline
+// git checks and one run per repo (AD-15: another live run holding exclusive/ blocks any run; a run
+// whose contract lists a shared service claims it, and is blocked by a live run already past
+// SCAFFOLD); then step_verified or the scaffold_failure card naming every failure, each failed
+// check with the tail of its log. A failed install raises the card without health and test.
+// A blocked run can only retry (once the other run ends) or abandon: no accept. Greenfield (5-2):
+// with nothing else failing, the CLI commits the scaffolded project as `factory: scaffold
+// (<step_id>)`; a scaffolder that created no project files fails. A greenfield failure offers retry
+// or abandon only.
 function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
   const { state } = run;
-  const steps = (['contract.health', 'contract.test'] as const).map((k) => latestCheckStep(state, k, sc.issued_seq));
+  const install = latestCheckStep(state, 'contract.install', sc.issued_seq);
+  if (!install || install.state !== 'verified') return [];
+  const installed = checkById(state, install.output?.check_id)?.exit_code === 0;
+  const steps = [install, ...(installed ? (['contract.health', 'contract.test'] as const).map((k) => latestCheckStep(state, k, sc.issued_seq)) : [])];
   if (steps.some((st) => !st || st.state !== 'verified')) return [];
   const checks = steps.map((st) => checkById(state, st!.output?.check_id));
   const t0 = Date.now();
@@ -217,7 +236,11 @@ function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
   const shared = Array.isArray(services) && services.some((x) => (x as { shared?: unknown }).shared === true);
   const conflict = scaffoldConflict(c.hash, c.runId, shared);
   const failures = [
-    ...checks.map((x, i) => (x && x.exit_code === 0 ? null : `${steps[i]!.check} failed${x ? ` (exit ${x.exit_code})` : ''}`)),
+    ...checks.map((x, i) => {
+      if (x && x.exit_code === 0) return null;
+      const tail = stepTail(steps[i]!);
+      return `${steps[i]!.check} failed${x ? ` (exit ${x.exit_code})` : ''}${tail ? `: ${tail}` : ''}`;
+    }),
     (clean.data as { exit_code: number }).exit_code === 0 ? null : 'tracked files changed in the worktree',
     base.pass ? null : 'the main checkout differs from its baseline',
     conflict ? refusedExclusive(conflict) : null,
@@ -225,8 +248,9 @@ function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
   ].filter((x): x is string => Boolean(x));
   const events = [clean, base.event];
   if (failures.length) {
-    // Greenfield offers no accept: an accepted scaffold would have no scaffold commit.
-    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict && !state.greenfield })));
+    // Greenfield offers no accept: an accepted scaffold would have no scaffold commit. Nor does a
+    // failed install: health and test never ran.
+    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict && !state.greenfield && installed })));
   } else {
     // Idempotent: a round that is not appended leaves the commit, and the next finds a clean worktree.
     const scaffold = state.greenfield ? [`scaffold:${changed ? commitAll(wt, `factory: scaffold (${sc.id})`) : head(wt)}`] : [];

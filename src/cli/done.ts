@@ -4,15 +4,17 @@
 // MAX_STEP_ATTEMPTS it raises Non-convergence instead (3-4). A cancelled step is ILLEGAL_TRANSITION.
 // The INTAKE conversation (3-1) is the conductor's own out.md: a parse failure appends nothing and the
 // step stays claimed; a `done` on the reported step re-reports it (reissued with the same out.md).
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { MAX_STEP_ATTEMPTS } from '../core/config.ts';
 import { FactoryError } from '../core/errors.ts';
 import type { AnyEvent } from '../core/events.ts';
 import { openSteps, type Step } from '../core/reducer.ts';
+import { isAppReviewer } from '../core/roster.ts';
 import { isIntakeChat, isIntakeConfirm } from '../core/verify.ts';
 import { loadRun, type LoadedRun } from '../store/load-run.ts';
 import { withLock } from '../store/locks.ts';
-import { lockDir, realish } from '../store/paths.ts';
+import { lockDir, playwrightDir, realish, stepDir } from '../store/paths.ts';
 import { flagString, type Args } from './args.ts';
 import { appendAll, gateOrThrow, makeEvent } from './commit.ts';
 import { repoRoot } from './git.ts';
@@ -121,5 +123,23 @@ export async function done(args: Args): Promise<unknown> {
   }
   const st = res.after.steps[stepId];
   const ask = Object.values(res.after.asks).find((a) => a.open && a.step_id === stepId);
-  return { step_id: stepId, state: st.state, ...(ask ? { escalation: ask.escalation } : {}) };
+  const shots = isAppReviewer(st.role) ? copyScreenshots(st.role!, stepId, stepDir(hash, runId, stepId)) : [];
+  return { step_id: stepId, state: st.state, ...(ask ? { escalation: ask.escalation } : {}), ...(shots.length ? { screenshots: shots } : {}) };
+}
+
+// A reported running-app reviewer's screenshots (`<step_id>-*.png` in its Playwright output dir)
+// are copied into the step dir, beside its out.md. Never fatal: a missing dir copies nothing.
+function copyScreenshots(role: string, stepId: string, dest: string): string[] {
+  const dir = playwrightDir(role);
+  let names: string[];
+  try { names = readdirSync(dir).filter((n) => n.startsWith(`${stepId}-`) && n.endsWith('.png')); } catch { return []; }
+  const out: string[] = [];
+  for (const n of names.sort()) {
+    try {
+      mkdirSync(dest, { recursive: true });
+      copyFileSync(join(dir, n), join(dest, n));
+      out.push(join(dest, n));
+    } catch { /* skipped */ }
+  }
+  return out;
 }

@@ -323,8 +323,14 @@ export async function decide(args: Args): Promise<unknown> {
   });
   // AD-20: once run_abandoned is on disk, the dev server is killed, then the port and the
   // exclusive claim are released.
+  // A server the CLI cannot stop keeps its claims: the decision stands, and the answer says how to
+  // stop it by hand (the next `factory next` releases them once it is gone).
   if (res.state.phase === 'ABANDONED') {
-    await devserverDown(hash, id);
+    try {
+      await devserverDown(hash, id);
+    } catch (e) {
+      return { ...res.out, devserver_error: e instanceof Error ? e.message : String(e) };
+    }
     releaseClaims(hash, id, res.state.port);
   }
   if (res.approved) return { ...res.out, ...(await mergeRun(c, res.state, res.approved)) };

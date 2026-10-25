@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { NODE_FLOOR } from '../src/core/config.ts';
 import { FactoryError } from '../src/core/errors.ts';
 import type { Args } from '../src/cli/args.ts';
-import { mergeSettings, setup } from '../src/cli/setup.ts';
+import { mergeSettings, settingsWarnings, setup } from '../src/cli/setup.ts';
 
 const ROOT = join(import.meta.dirname, '..');
 const BIN = join(ROOT, 'bin', 'factory');
@@ -45,6 +45,23 @@ test('mergeSettings adds the sandbox write rule only when a sandbox is enabled, 
   assert.deepEqual(mergeSettings(tilde, home), []);
 });
 
+test('setup warns (and changes nothing for it) when the sandbox is on without sandbox.network.allowLocalBinding', () => {
+  assert.deepEqual(settingsWarnings({}, '/s.json'), []);
+  assert.deepEqual(settingsWarnings({ sandbox: { enabled: false } }, '/s.json'), []);
+  assert.deepEqual(settingsWarnings({ sandbox: { enabled: true, network: { allowLocalBinding: true } } }, '/s.json'), []);
+  const [w] = settingsWarnings({ sandbox: { enabled: true, network: { allowLocalBinding: false } } }, '/s.json');
+  assert.match(w, /sandbox\.network\.allowLocalBinding is not true[\s\S]*listen EPERM[\s\S]*\/s\.json/);
+  // Through the shim: the warning is in the output, and the merge leaves sandbox.network alone.
+  const home = mkdtempSync(join(tmpdir(), 'factory-home-'));
+  const settings = join(mkdtempSync(join(tmpdir(), 'claude-')), 'settings.json');
+  writeFileSync(settings, JSON.stringify({ sandbox: { enabled: true } }));
+  const r = run(['setup'], { FACTORY_HOME: join(home, '.factory'), FACTORY_CLAUDE_SETTINGS: settings });
+  assert.equal(r.code, 0, JSON.stringify(r.out));
+  assert.equal(r.out.warnings.length, 1);
+  assert.match(r.out.warnings[0], /sandbox\.network\.allowLocalBinding/);
+  assert.equal(JSON.parse(readFileSync(settings, 'utf8')).sandbox.network, undefined);
+});
+
 test('mergeSettings refuses to overwrite a field of the wrong type', () => {
   assert.throws(() => mergeSettings({ permissions: { allow: 'Read' } }, '/h'), (e: unknown) => e instanceof FactoryError && e.code === 'SETUP_FAILED');
 });
@@ -57,6 +74,7 @@ test('factory setup through the shim is idempotent and backs up settings once', 
   const a = run(['setup'], env);
   assert.equal(a.code, 0, JSON.stringify(a.out));
   assert.equal(a.out.settings_changed.length, 3);
+  assert.deepEqual(a.out.warnings, []);
   assert.equal(readlinkSync(join(home, '.factory', 'node')), process.execPath);
   assert.ok(existsSync(settings + '.before-factory'));
   const b = run(['setup'], env);

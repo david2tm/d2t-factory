@@ -75,7 +75,9 @@ function orient(s: RunState, ctx: ScheduleCtx): DueStep[] {
 }
 
 // SCAFFOLD: the CLI makes the worktree; the conductor enters it; the scaffolder writes the run
-// contract; then the health and test checks. The CLI verifies the scaffolder when both pass.
+// contract; then the contract's install in the worktree, and once it passed the health and test
+// checks. A failed install runs neither: the CLI raises the card. The CLI verifies the scaffolder
+// when all three pass.
 function scaffold(s: RunState, ctx: ScheduleCtx): DueStep[] {
   if (!s.worktree) return [];
   if (!ctx.in_worktree) {
@@ -85,6 +87,9 @@ function scaffold(s: RunState, ctx: ScheduleCtx): DueStep[] {
   const sc = latestByRole(s, 'scaffolder');
   if (!sc) return [agent('scaffolder', 'SCAFFOLD', 1)];
   if (sc.state !== 'reported' || sc.output?.status !== 'DONE' || sc.output.failure || askOpenFor(s, sc.id)) return [];
+  const install = latestCheckStep(s, 'contract.install', sc.issued_seq);
+  if (!install) return [runCheck('contract.install', 'SCAFFOLD')];
+  if (install.state !== 'verified' || install.output?.exit_code !== 0) return [];
   return (['contract.health', 'contract.test'] as const).filter((c) => !latestCheckStep(s, c, sc.issued_seq)).map((c) => runCheck(c, 'SCAFFOLD'));
 }
 

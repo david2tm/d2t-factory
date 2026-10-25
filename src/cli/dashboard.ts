@@ -2,11 +2,11 @@
 // The CLI never imports the server; it spawns it by path. A dashboard failure never fails the verb
 // that asked for it: the answer is then dashboard_url null plus dashboard_error.
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DASHBOARD_PORT_DEFAULT } from '../core/config.ts';
 import { FactoryError } from '../core/errors.ts';
-import { dashboardLog, dashboardPidFile, dashboardServerEntry, factoryHome } from '../store/paths.ts';
+import { claudeSettingsFile, dashboardLog, dashboardPidFile, dashboardServerEntry, factoryHome } from '../store/paths.ts';
 import { pluginVersion } from '../store/plugin.ts';
 import { readPluginEnv } from '../store/sessions.ts';
 import type { Args } from './args.ts';
@@ -74,6 +74,7 @@ async function ensure(): Promise<DashboardAnswer> {
 
   // 3. Spawn it detached, its output to dashboard.log, and wait for its own pid on /api/health.
   mkdirSync(dirname(dashboardLog()), { recursive: true });
+  const from = logSize();
   const logFd = openSync(dashboardLog(), 'a');
   let exited: number | null | undefined;
   let child;
@@ -88,14 +89,25 @@ async function ensure(): Promise<DashboardAnswer> {
   for (const end = Date.now() + START_WAIT_MS; Date.now() < end;) {
     // 4. A child that exits 3 found the port taken by something that is not a factory dashboard.
     if (exited !== undefined) {
-      return { dashboard_url: null, dashboard_error: exited === EXIT_PORT_IN_USE ? `port ${port} is in use by another process` : `the dashboard server exited (${exited}); see ${dashboardLog()}` };
+      return { dashboard_url: null, dashboard_error: exited === EXIT_PORT_IN_USE ? `port ${port} is in use by another process` : listenDenied(from, port) ?? `the dashboard server exited (${exited}); see ${dashboardLog()}` };
     }
     const h = await health(port);
     if (h?.pid === child.pid) return { dashboard_url: url };
     await sleep(POLL_MS);
   }
   if (exited === EXIT_PORT_IN_USE) return { dashboard_url: null, dashboard_error: `port ${port} is in use by another process` };
-  return { dashboard_url: null, dashboard_error: `the dashboard server did not answer on port ${port} within ${START_WAIT_MS / 1000} s; see ${dashboardLog()}` };
+  return { dashboard_url: null, dashboard_error: listenDenied(from, port) ?? `the dashboard server did not answer on port ${port} within ${START_WAIT_MS / 1000} s; see ${dashboardLog()}` };
+}
+
+const logSize = (): number => { try { return statSync(dashboardLog()).size; } catch { return 0; } };
+
+// The sandbox's local-binding refusal, read from the dashboard.log bytes the spawned server wrote
+// (from `from` on), named with the setting that lifts it.
+function listenDenied(from: number, port: number): string | undefined {
+  let text = '';
+  try { text = readFileSync(dashboardLog()).subarray(from).toString('utf8'); } catch { return undefined; }
+  if (!text.includes('listen EPERM')) return undefined;
+  return `the dashboard server may not listen on 127.0.0.1:${port} (listen EPERM): the Claude sandbox blocks local binding. Set sandbox.network.allowLocalBinding to true in ${claudeSettingsFile()}, or run outside the sandbox; see ${dashboardLog()}`;
 }
 
 // FACTORY_DASHBOARD_OFF (tests) never starts a server. Never throws.

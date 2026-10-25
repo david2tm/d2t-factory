@@ -8,13 +8,14 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { logTail } from '../src/cli/next.ts';
 import { validateEvent } from '../src/core/events.ts';
 import { projectRun } from '../src/core/projection.ts';
 import { fold } from '../src/core/reducer.ts';
 import { mayStop } from '../src/core/stop.ts';
 import {
-  agentStops, agentWrites, approveOut, builderOut, commands, consumed, contract, decide, designOut, fails, findingsOut, frameOut, git, ok, questionBlock, reconOut, recordIntake, run, runDir, say,
+  agentStops, agentWrites, approveOut, BIN as BIN_PATH, builderOut, commands, consumed, contract, decide, designOut, fails, findingsOut, frameOut, git, ok, questionBlock, reconOut, recordIntake, run, runDir, say,
   scaffoldOut, SECRET, serveBoard, slicerOut, specOut, world, writeApp, type World, type PlanSlice,
 } from './harness.ts';
 
@@ -65,6 +66,12 @@ function conductor(w: World, s: string) {
       assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['plan.lint', true]]);
       return sl;
     },
+    // SCAFFOLD: contract.install, then contract.health and contract.test once install passed.
+    scaffoldChecks(): any[] {
+      const install = c.checks();
+      assert.deepEqual(install.map((x) => x.name), ['contract.install']);
+      return install[0].passed ? [...install, ...c.checks()] : install;
+    },
     // WRAP: contract.health (it restarts the dev server), then contract.test once health is in.
     wrapChecks(): any[] {
       const health = c.checks();
@@ -109,7 +116,7 @@ function toSpec(w: World, s: string, t: TestContext) {
   const r = toScaffold(w, s, t);
   const sc = r.c.take(byKind('spawn', 'scaffolder'));
   assert.equal(ok(r.c.agent(sc, scaffoldOut(contract(r.port)), 'ag-scaffold')).state, 'reported');
-  assert.deepEqual(r.c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  assert.deepEqual(r.c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
   return r;
 }
 
@@ -148,14 +155,14 @@ test('acceptance: the whole front half through bin/factory ends in BUILD with S1
   assert.equal(ok(c.agent(sc, scaffoldOut(contract(ss.data.port)), 'ag-scaffold')).state, 'reported');
   assert.equal(readFileSync(join(enter.path, '.env'), 'utf8'), `API_TOKEN=${SECRET}\n`);
   assert.deepEqual(JSON.parse(readFileSync(join(runDir(w, id), 'redact.json'), 'utf8')).values, [SECRET]);
-  const checks = c.checks();
-  assert.deepEqual(checks.map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  const checks = c.scaffoldChecks();
+  assert.deepEqual(checks.map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
   assert.ok(existsSync(join(runDir(w, id), 'devserver.pid')) && existsSync(join(runDir(w, id), 'devserver.log')));
 
   // SPEC, then spec.lint, then the gate_1 card.
   const sw1 = c.take(byKind('spawn', 'spec-writer'));
   const v = commands(w, id).filter((e) => e.kind === 'check_ran').map((e) => [e.data.check, e.data.exit_code]);
-  assert.deepEqual(v.slice(-4), [['contract.health', 0], ['contract.test', 0], ['git.worktree_clean', 0], ['git.baseline', 0]]);
+  assert.deepEqual(v.slice(-5), [['contract.install', 0], ['contract.health', 0], ['contract.test', 0], ['git.worktree_clean', 0], ['git.baseline', 0]]);
   assert.equal(stateOf(w, id).steps[sc.step_id].state, 'verified');
   assert.equal(ok(c.agent(sw1, specOut('Footer'), 'ag-spec-1')).state, 'verified');
   assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['spec.lint', true]]);
@@ -336,7 +343,7 @@ test('scaffold failures: a wrong port raises the card, retry reissues with the n
   const sc2 = c.take(byKind('spawn', 'scaffolder'));
   assert.match(readFileSync(sc2.brief_path, 'utf8'), /E1 retry: use the claimed port[\s\S]*Your previous output was rejected/);
   ok(c.agent(sc2, scaffoldOut(contract(port, { test: 'npm test --silent && exit 3' })), 'ag-s2'));
-  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', false]]);
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', false]]);
   const card2 = c.take(card('scaffold_failure'));
   assert.equal(card2.card.escalation, 'E2');
   assert.deepEqual(card2.card.commands, ['/factory rule E2 retry <note…>', '/factory rule E2 accept', '/factory abandon']);
@@ -374,6 +381,7 @@ test('check: HEAD moving while the check runs → ILLEGAL_TRANSITION, no result 
   const sc = c.take(byKind('spawn', 'scaffolder'));
   const moving = 'git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m moved && npm test --silent';
   ok(c.agent(sc, scaffoldOut(contract(port, { test: moving })), 'ag-s'));
+  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.install', true]]);
   const steps = c.next().steps.filter((st: any) => st.check === 'contract.test');
   c.claim(steps[0].step_id);
   const before = commands(w, id).length;
@@ -466,7 +474,7 @@ function toChecks(w: World, s: string, t: TestContext, o: Record<string, unknown
 test('SCAFFOLD done: a tracked file changed in the worktree raises scaffold_failure', (t) => {
   const w = world();
   const { c, wt } = toChecks(w, 'sa', t);
-  assert.deepEqual(c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   writeFileSync(join(wt, 'test.js'), "console.log('changed');\n");
   const crd = c.take(card('scaffold_failure'));
   assert.equal(crd.card.reason, 'tracked files changed in the worktree');
@@ -476,7 +484,7 @@ test('SCAFFOLD done: a tracked file changed in the worktree raises scaffold_fail
 test('SCAFFOLD done: a main-checkout change since the baseline raises scaffold_failure', (t) => {
   const w = world();
   const { c } = toChecks(w, 'sa', t);
-  assert.deepEqual(c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   writeFileSync(join(w.repo, 'stray.txt'), 'x\n');
   const crd = c.take(card('scaffold_failure'));
   assert.equal(crd.card.reason, 'the main checkout differs from its baseline');
@@ -517,16 +525,114 @@ test('health as an http URL passes against the running dev server', SERVER, (t) 
   const r = toScaffold(w, 'sa', t);
   const sc = r.c.take(byKind('spawn', 'scaffolder'));
   ok(r.c.agent(sc, scaffoldOut(contract(r.port, { health: `http://127.0.0.1:${r.port}/health` })), 'ag-s'));
-  assert.deepEqual(r.c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  assert.deepEqual(r.c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
 });
 
-test('a dev server that exits fails health with "the dev server exited"', (t) => {
+test('a dev server that exits fails health with "the dev server exited"; its log tail reaches the health log and the card', (t) => {
   const w = world();
-  const { c } = toChecks(w, 'sa', t, { start: 'exit 1', health: 'false' });
-  const [health] = c.checks();
+  const { c } = toChecks(w, 'sa', t, { start: `echo "Error: Port 5100 is already in use ${SECRET}" >&2; exit 1`, health: 'false' });
+  const [, health] = c.scaffoldChecks();
   assert.deepEqual([health.name, health.passed], ['contract.health', false]);
-  assert.match(readFileSync(health.out, 'utf8'), /the dev server exited/);
-  assert.match(c.take(card('scaffold_failure')).card.reason, /contract\.health failed \(exit 1\)/);
+  const log = readFileSync(health.out, 'utf8');
+  assert.match(log, /devserver\.log:\nError: Port 5100 is already in use \[REDACTED\]\nthe dev server exited\n$/);
+  const reason = c.take(card('scaffold_failure')).card.reason;
+  assert.equal(reason, 'contract.health failed (exit 1): devserver.log: / Error: Port 5100 is already in use [REDACTED] / the dev server exited');
+});
+
+test('install (dry run 1): SCAFFOLD runs the contract install first; a failed install raises scaffold_failure with its redacted log tail and runs neither health nor test', (t) => {
+  const w = world();
+  const { id, c } = toChecks(w, 'sa', t, { install: `echo resolving; echo "npm ERR! 404 for ${SECRET}" >&2; exit 7` });
+  const n = c.next();
+  assert.deepEqual(n.steps.map((x: any) => x.check), ['contract.install'], 'install alone, before health and test');
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', false]]);
+  const crd = c.take(card('scaffold_failure'));
+  assert.equal(crd.card.reason, 'contract.install failed (exit 7): resolving / npm ERR! 404 for [REDACTED]');
+  assert.deepEqual(crd.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon'], 'no accept: health and test never ran');
+  const ran = commands(w, id).filter((e) => e.kind === 'check_ran').map((e) => e.data.check);
+  assert.ok(!ran.includes('contract.health') && !ran.includes('contract.test'), JSON.stringify(ran));
+  assert.equal(commands(w, id).some((e) => e.kind === 'step_issued' && ['contract.health', 'contract.test'].includes(e.data.check)), false, 'no health or test issued');
+  assert.ok(!readFileSync(join(runDir(w, id), 'commands.jsonl'), 'utf8').includes(SECRET));
+});
+
+test('install that rewrites a tracked file (a lockfile) fails git.worktree_clean', (t) => {
+  const w = world();
+  const { c } = toChecks(w, 'sa', t, { install: "echo '// rewritten' >> test.js" });
+  assert.deepEqual(c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
+  assert.equal(c.take(card('scaffold_failure')).card.reason, 'tracked files changed in the worktree');
+});
+
+test('logTail: the last 3 non-empty lines without `$ cmd` and `[exit N]`, joined with " / ", at most 240 chars', () => {
+  assert.equal(logTail('$ npm ci\na\n\nb\nc\nd\n[exit 1]\n'), 'b / c / d');
+  assert.equal(logTail('$ exit 7\n\n[exit 7]\n'), '');
+  const long = logTail(`${'x'.repeat(300)}\nend\n`);
+  assert.equal(long.length, 240);
+  assert.ok(long.startsWith('…') && long.endsWith(' / end'), long);
+});
+
+test('health passes only while the started pid lives: a server that died before health answered fails with "something else answers"', (t) => {
+  const w = world();
+  const { c, port } = toChecks(w, 'sa', t, { start: 'exit 0', health: 'sleep 1' });
+  const [, health] = c.scaffoldChecks();
+  assert.deepEqual([health.name, health.passed], ['contract.health', false]);
+  assert.match(readFileSync(health.out, 'utf8'), new RegExp(`the dev server exited; something else answers on port ${port}`));
+  assert.match(c.take(card('scaffold_failure')).card.reason, new RegExp(`contract\\.health failed \\(exit 1\\): .*something else answers on port ${port}`));
+});
+
+test('port taken before start: health is refused with CHECK_FAILED, nothing is spawned, and the step is reissued', SERVER, async (t) => {
+  const w = world();
+  const { id, c, port } = toChecks(w, 'sa', t, { start: 'sleep 30' });
+  const foreign = createServer((sock) => sock.end());
+  await new Promise<void>((r) => foreign.listen(port, '127.0.0.1', () => r()));
+  try {
+    assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.install', true]]);
+    const health = c.next().steps.find((x: any) => x.check === 'contract.health');
+    c.claim(health.step_id);
+    const r = await new Promise<any>((resolve) => {
+      // Async: this process must keep serving the port while the CLI probes it.
+      const env: NodeJS.ProcessEnv = { ...process.env, ...w.env };
+      delete env.CLAUDE_CODE_SESSION_ID;
+      const child = spawn(BIN_PATH, ['check', health.step_id, '--session', 'sa'], { cwd: c.cwd, env });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.on('close', (code) => resolve({ code, out: JSON.parse(out) }));
+    });
+    assert.equal(r.code, 1, JSON.stringify(r.out));
+    assert.equal(r.out.error.code, 'CHECK_FAILED');
+    assert.match(r.out.error.message, new RegExp(`port ${port} already answers[\\s\\S]*reissued as step`));
+    assert.equal(existsSync(join(runDir(w, id), 'devserver.pid')), false, 'no dev server spawned');
+    assert.equal(last(w, id, 'step_reissued').data.old, health.step_id);
+  } finally {
+    await new Promise<void>((r) => foreign.close(() => r()));
+  }
+});
+
+test('abandon with a dev server the CLI cannot signal (EPERM): the decision stands, devserver_error names the pid, and the port claim and pid file stay', { skip: process.getuid?.() === 0 && 'root may signal pid 1' }, (t) => {
+  const w = world();
+  const { id, c, port } = toScaffold(w, 'sa', t);
+  const pidFile = join(runDir(w, id), 'devserver.pid');
+  writeFileSync(pidFile, JSON.stringify({ pid: 1, port, start: 'npm start', started_at: new Date().toISOString() }) + '\n');
+  try {
+    const a = ok(decide(w, 'sa', 'abandon', { cwd: c.cwd }));
+    assert.equal(a.phase, 'ABANDONED');
+    assert.match(a.devserver_error, /pid 1 from .*devserver\.pid still runs/);
+    assert.ok(existsSync(join(w.home, 'ports', String(port))), 'the port claim stays');
+    assert.ok(existsSync(pidFile), 'the pid file stays');
+  } finally {
+    rmSync(pidFile, { force: true });
+  }
+});
+
+test('an old dev server the CLI cannot signal (EPERM) is never replaced: devserver down is refused naming the pid, and its pid file stays', { skip: process.getuid?.() === 0 && 'root may signal pid 1' }, (t) => {
+  const w = world();
+  const { id } = toScaffold(w, 'sa', t);
+  const pidFile = join(runDir(w, id), 'devserver.pid');
+  writeFileSync(pidFile, JSON.stringify({ pid: 1, port: 5100, start: 'npm start', started_at: new Date().toISOString() }) + '\n');
+  try {
+    fails(run(w, ['devserver', 'down', '--session', 'sa']), 'CHECK_FAILED', new RegExp(`cannot signal the old dev server \\(EPERM\\): pid 1 from ${pidFile} still runs[\\s\\S]*ps -o pid,command -p 1[\\s\\S]*kill -TERM -1[\\s\\S]*delete ${pidFile} instead`));
+    assert.ok(existsSync(pidFile), 'the pid file is kept');
+  } finally {
+    rmSync(pidFile, { force: true });
+  }
 });
 
 test('a copied secret is redacted in the log and the check output, yet the raw contract runs; HOST=localhost leaves a localhost health intact', SERVER, (t) => {
@@ -537,10 +643,10 @@ test('a copied secret is redacted in the log and the check output, yet the raw c
   const health = `node -e "require('http').get({host:'localhost',family:4,port:process.env.PORT,path:'/health'},(x)=>process.exit(x.statusCode===200?0:1)).on('error',()=>process.exit(1))"`;
   ok(r.c.agent(sc, scaffoldOut(contract(r.port, { test: `grep ${SECRET} .env && npm test --silent`, health })), 'ag-s'));
   assert.deepEqual(JSON.parse(readFileSync(join(runDir(w, r.id), 'redact.json'), 'utf8')).values, [SECRET, 'localhost']);
-  const checks = r.c.checks();
-  assert.deepEqual(checks.map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  const checks = r.c.scaffoldChecks();
+  assert.deepEqual(checks.map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
   const log = readFileSync(join(runDir(w, r.id), 'commands.jsonl'), 'utf8');
-  const out = readFileSync(checks[1].out, 'utf8');
+  const out = readFileSync(checks[2].out, 'utf8');
   for (const text of [log, out]) {
     assert.ok(text.includes('[REDACTED]'), text);
     assert.ok(!text.includes(SECRET));
@@ -558,7 +664,7 @@ function toGate2(w: World, s: string, t: TestContext, o: Record<string, unknown>
   const r = toScaffold(w, s, t, intake);
   const sc = r.c.take(byKind('spawn', 'scaffolder'));
   ok(r.c.agent(sc, scaffoldOut(contract(r.port, o)), 'ag-scaffold'));
-  assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(r.c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   const spec = r.c.take(byKind('spawn', 'spec-writer'));
   ok(r.c.agent(spec, specOut('Footer'), 'ag-spec'));
   assert.deepEqual(r.c.checks().map((x) => x.passed), [true]);
@@ -1151,7 +1257,7 @@ function toSpecDesign(w: World, s: string, t: TestContext, recon = reconOut(), o
   const sc = r.c.take(byKind('spawn', 'scaffolder'));
   if (green) writeApp(enter.path);
   ok(r.c.agent(sc, scaffoldOut(contract(port, { ...NO_SERVER, ...(green ? { copy_gitignored: [] } : {}), ...o })), 'ag-scaffold'));
-  assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(r.c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   return { ...r, wt: enter.path as string };
 }
 
@@ -1387,6 +1493,9 @@ function toGate2Design(w: World, s: string, t: TestContext, slices: PlanSlice[],
 test('acceptance (3-3): with a design, the slicer plans S1 [ui, input] and S2 ← S1; gate 2 shows both rosters and embeds tags, deps and rosters; S1 reviews with code, security and health, then ux, a11y and ui; only the raising reviewer re-checks; S2 reviews with reviewer-code only; the merge pins every rostered review', (t) => {
   const w = world();
   const s = 'sa';
+  // The running-app reviewers' Playwright dirs follow HOME (as .mcp.json's --output-dir does).
+  (w.env as Record<string, string>).HOME = w.base;
+  const shots = (role: string): string => join(w.base, '.factory', 'playwright', role);
   const r = toGate2Design(w, s, t, [{ id: 'S1', title: 'Signup form', acs: ['AC-1'], tags: ['ui', 'input'] }, { id: 'S2', title: 'Welcome mail', acs: ['AC-2'], depends_on: ['S1'] }], { e2e: 'npx playwright test' });
   const { id, c, wt } = r;
   assert.equal(r.gate2.card.reason, '2 slices: S1 Signup form (AC-1) [ui, input] · code, security, ux, a11y, ui; S2 Welcome mail (AC-2) ← S1 · code');
@@ -1423,7 +1532,8 @@ test('acceptance (3-3): with a design, the slicer plans S1 [ui, input] and S2 �
   const uxBrief = readFileSync(ux1.brief_path, 'utf8');
   for (const want of [
     `the running app: http://127.0.0.1:${r.port}`, 'mcp__plugin_d2t-factory_playwright-ux__browser_navigate, ', 'call browser_close first', 'observed: <url> <state> [<screenshot>]', 'run contract from SCAFFOLD',
-    "the repo's e2e tooling: `npx playwright test`", `reviewer-ui is on this slice's roster (reference: ${r.ds.output_path})`, '`<step_id>-<n>.png`',
+    "the repo's e2e tooling: `npx playwright test`", `reviewer-ui is on this slice's roster (reference: ${r.ds.output_path})`,
+    `Save each screenshot at \`${shots('reviewer-ux')}/${ux1.step_id}-<n>.png\``, 'always pass that whole absolute path as the screenshot\'s filename', 'Write nothing else under ~/.factory except your screenshots, at the paths the output format below gives', `[${shots('reviewer-ux')}/${ux1.step_id}-1.png]`,
   ]) {
     assert.ok(uxBrief.includes(want), `${want} in\n${uxBrief}`);
   }
@@ -1436,7 +1546,16 @@ test('acceptance (3-3): with a design, the slicer plans S1 [ui, input] and S2 �
   fails(c.done(ux1.step_id), 'MISSING_EVIDENCE', /finding 1: observed is missing/);
   const ux2 = c.take(byKind('spawn', 'reviewer-ux'));
   assert.equal(ux2.attempt, 2);
-  ok(c.agent(ux2, approveOut(), 'ag-ux'));
+  // Its screenshots in the Playwright dir are copied into its step dir at done; another step's stay.
+  mkdirSync(shots('reviewer-ux'), { recursive: true });
+  writeFileSync(join(shots('reviewer-ux'), `${ux2.step_id}-1.png`), 'png 1');
+  writeFileSync(join(shots('reviewer-ux'), `${ux2.step_id}-2.png`), 'png 2');
+  writeFileSync(join(shots('reviewer-ux'), 'OTHERSTEP-1.png'), 'other');
+  const uxDone = ok(c.agent(ux2, approveOut(), 'ag-ux'));
+  const stepDirOf = join(ux2.output_path, '..');
+  assert.deepEqual(uxDone.screenshots, [join(stepDirOf, `${ux2.step_id}-1.png`), join(stepDirOf, `${ux2.step_id}-2.png`)]);
+  assert.equal(readFileSync(join(stepDirOf, `${ux2.step_id}-2.png`), 'utf8'), 'png 2');
+  assert.equal(existsSync(join(stepDirOf, 'OTHERSTEP-1.png')), false);
   ok(c.agent(a11y1, approveOut(), 'ag-a11y'));
   ok(c.agent(ui1, approveOut(), 'ag-ui'));
   ok(c.agent(code1, approveOut(), 'ag-code'));
@@ -1481,7 +1600,7 @@ test('the slicer (3-3): a schema error is MISSING_EVIDENCE and a reissue; a lint
   const r = toScaffold(w, s, t);
   const { id, c } = r;
   ok(c.agent(c.take(byKind('spawn', 'scaffolder')), scaffoldOut(contract(r.port, NO_SERVER)), 'ag-scaffold'));
-  c.checks();
+  c.scaffoldChecks();
   ok(c.agent(c.take(byKind('spawn', 'spec-writer')), specOut('Footer'), 'ag-spec'));
   c.checks();
   c.take(card('gate_1'));
@@ -1852,7 +1971,7 @@ test('rerun RECON (3-4) at gate 1: a fresh recon overwrites the cache, SCAFFOLD 
   const r = toScaffold(w, s, t);
   const { id, c } = r;
   ok(c.agent(c.take(byKind('spawn', 'scaffolder')), scaffoldOut(contract(r.port, NO_SERVER)), 'ag-scaffold'));
-  c.checks();
+  c.scaffoldChecks();
   const sw1 = c.take(byKind('spawn', 'spec-writer'));
   ok(c.agent(sw1, specOut('Footer'), 'ag-spec'));
   c.checks();
@@ -2056,7 +2175,7 @@ test('parallel (5-1): two runs in one repo, interleaved to run_completed, on the
   // SCAFFOLD, SPEC, gate 1, the plan, gate 2: one stage at a time, A then B.
   const scs = each((r) => r.c.take(byKind('spawn', 'scaffolder')));
   each((r, i) => ok(r.c.agent(scs[i], scaffoldOut(contract(ports[i], NO_SERVER)), `ag-scaffold-${r.s}`)));
-  each((r) => assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]));
+  each((r) => assert.deepEqual(r.c.scaffoldChecks().map((x) => x.passed), [true, true, true]));
   const specs = each((r) => r.c.take(byKind('spawn', 'spec-writer')));
   each((r, i) => ok(r.c.agent(specs[i], specOut(tasks[i]), `ag-spec-${r.s}`)));
   each((r) => assert.deepEqual(r.c.checks().map((x) => x.passed), [true]));
@@ -2151,7 +2270,7 @@ function bothAtScaffold(w: World, t: TestContext) {
 function scaffolds(r: ReturnType<typeof bothAtScaffold>[number], o: Record<string, unknown>) {
   const sc = r.c.take(byKind('spawn', 'scaffolder'));
   ok(r.c.agent(sc, scaffoldOut(contract(r.port, o)), `ag-scaffold-${r.s}`));
-  assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(r.c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   return sc;
 }
 
@@ -2199,7 +2318,7 @@ test('a stale exclusive claim at SCAFFOLD (5-1): exclusive/run naming a missing 
   writeFileSync(join(excl, 'run'), 'gone-zzzz\n');
   const sc = r.c.take(byKind('spawn', 'scaffolder'));
   ok(r.c.agent(sc, scaffoldOut(contract(r.port, SHARED)), 'ag-scaffold'));
-  assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(r.c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   r.c.take(byKind('spawn', 'spec-writer'));
   assert.equal(stateOf(w, r.id).steps[sc.step_id].state, 'verified');
   assert.equal(commands(w, r.id).some((e) => e.kind === 'ask_raised'), false, 'no scaffold_failure');
@@ -2215,7 +2334,7 @@ test('shared service (5-1): A holds the exclusive claim from SCAFFOLD; a start i
   // A's SCAFFOLD completes and claims the repo.
   const scA = A.c.take(byKind('spawn', 'scaffolder'));
   ok(A.c.agent(scA, scaffoldOut(contract(A.port, SHARED)), 'ag-scaffold-a'));
-  assert.deepEqual(A.c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(A.c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   A.c.take(byKind('spawn', 'spec-writer'));
   assert.equal(readFileSync(join(excl, 'run'), 'utf8'), `${A.id}\n`);
   // A third start: refused before anything is claimed.
@@ -2229,7 +2348,7 @@ test('shared service (5-1): A holds the exclusive claim from SCAFFOLD; a start i
   // B reaches the end of SCAFFOLD: the card, its reason the refusal text, no accept.
   const scB = B.c.take(byKind('spawn', 'scaffolder'));
   ok(B.c.agent(scB, scaffoldOut(contract(B.port, SHARED)), 'ag-scaffold-b'));
-  assert.deepEqual(B.c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(B.c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   const crd = B.c.take(card('scaffold_failure'));
   assert.equal(crd.card.reason, text);
   assert.deepEqual(crd.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon']);
@@ -2244,7 +2363,7 @@ test('shared service (5-1): A holds the exclusive claim from SCAFFOLD; a start i
   const scB2 = B.c.take(byKind('spawn', 'scaffolder'));
   assert.equal(scB2.step_id, rr.reissued);
   ok(B.c.agent(scB2, scaffoldOut(contract(B.port, SHARED)), 'ag-scaffold-b2'));
-  assert.deepEqual(B.c.checks().map((x) => x.passed), [true, true]);
+  assert.deepEqual(B.c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
   B.c.take(byKind('spawn', 'spec-writer'));
   assert.equal(stateOf(w, B.id).steps[scB2.step_id].state, 'verified');
   assert.equal(readFileSync(join(excl, 'run'), 'utf8'), `${B.id}\n`);
@@ -2316,7 +2435,7 @@ function wholeRun(w: World, s: string, t: TestContext, green: boolean) {
   briefs.scaffolder = readFileSync(sc.brief_path, 'utf8');
   if (green) writeApp(wt);
   ok(c.agent(sc, scaffoldOut(contract(portOf(w, id), green ? GREEN_CONTRACT : NO_SERVER)), 'ag-scaffold'));
-  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
   const [sw, ds] = c.next().steps;
   c.claim(sw.step_id);
   c.claim(ds.step_id);
@@ -2474,7 +2593,7 @@ test('greenfield SCAFFOLD (5-2): a scaffolder that created no project files gets
   const sc1 = c.take(byKind('spawn', 'scaffolder'));
   // Only the contract: no project in the worktree (its checks are `true`, so they pass).
   ok(c.agent(sc1, scaffoldOut(contract(portOf(w, id), { ...GREEN_CONTRACT, test: 'true' })), 'ag-sc1'));
-  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
   const fail = c.take(card('scaffold_failure'));
   assert.equal(fail.card.reason, 'the scaffolder created no project files');
   assert.deepEqual(fail.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon']);
@@ -2487,7 +2606,7 @@ test('greenfield SCAFFOLD (5-2): a scaffolder that created no project files gets
   // A project whose test fails: still no accept on a greenfield run (it would leave no scaffold commit).
   writeApp(wt);
   ok(c.agent(sc1b, scaffoldOut(contract(portOf(w, id), { ...GREEN_CONTRACT, test: 'false' })), 'ag-sc1b'));
-  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', false]]);
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', false]]);
   const fail2 = c.take(card('scaffold_failure'));
   assert.equal(fail2.card.reason, 'contract.test failed (exit 1)');
   assert.deepEqual(fail2.card.commands, ['/factory rule E2 retry <note…>', '/factory abandon']);
@@ -2497,7 +2616,7 @@ test('greenfield SCAFFOLD (5-2): a scaffolder that created no project files gets
   const sc2 = c.take(byKind('spawn', 'scaffolder'));
   assert.equal(sc2.attempt, 3);
   ok(c.agent(sc2, scaffoldOut(contract(portOf(w, id), GREEN_CONTRACT)), 'ag-sc2'));
-  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
   assert.deepEqual(c.next().steps.map((x: any) => x.agent), ['d2t-factory:spec-writer']);
   assert.deepEqual(subjects(wt), [`factory: scaffold (${sc2.step_id})`, 'factory: init']);
   assert.equal(git(wt, 'status', '--porcelain').trim(), '', 'the worktree is clean');

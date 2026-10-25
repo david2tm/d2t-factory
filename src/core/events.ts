@@ -27,7 +27,7 @@ export const STEP_KINDS = ['spawn', 'resume', 'ask_human', 'run_check', 'enter_w
 export type StepKind = (typeof STEP_KINDS)[number];
 
 export const CHECKS = [
-  'contract.test', 'contract.health', 'git.baseline', 'git.worktree_clean', 'git.deps', 'git.merged',
+  'contract.test', 'contract.health', 'contract.install', 'git.baseline', 'git.worktree_clean', 'git.deps', 'git.merged',
   'spec.lint', 'plan.lint', 'devserver',
 ] as const;
 export type Check = (typeof CHECKS)[number];

@@ -528,6 +528,25 @@ test('foreign port: a port held by another process is reported and no pid file i
   }
 });
 
+test('listen EPERM (a sandbox without local binding): dashboard_error names sandbox.network.allowLocalBinding; an older EPERM line in the log does not count', async () => {
+  const h = await makeHome();
+  // A preload that makes every listen fail with `code`, the way the Claude sandbox fails it with EPERM.
+  const denying = (code: string): NodeJS.ProcessEnv => {
+    const preload = join(h.home, '..', `deny-listen-${code}.mjs`);
+    writeFileSync(preload, `import net from 'node:net';\nnet.Server.prototype.listen = function (port, host) { const e = Object.assign(new Error(\`listen ${code}: denied \${host}:\${port}\`), { code: '${code}', syscall: 'listen' }); process.nextTick(() => this.emit('error', e)); return this; };\n`);
+    return { ...h.env, NODE_OPTIONS: `--import=${preload}` };
+  };
+  const ask = (env: NodeJS.ProcessEnv): any => JSON.parse(spawnSync(BIN, ['dashboard', '--session', 'board-test'], { env, encoding: 'utf8' }).stdout);
+  const eperm = ask(denying('EPERM'));
+  assert.equal(eperm.dashboard_url, null);
+  assert.match(eperm.dashboard_error, /listen EPERM[\s\S]*sandbox\.network\.allowLocalBinding to true/);
+  assert.equal(existsSync(pidFile(h)), false);
+  // Another failure later: only the bytes this spawn appended count, so no sandbox hint.
+  const other = ask(denying('EACCES'));
+  assert.match(other.dashboard_error, /^the dashboard server exited \(1\); see /);
+  assert.match(readFileSync(join(h.home, 'dashboard.log'), 'utf8'), /listen EPERM[\s\S]*listen EACCES/);
+});
+
 test('FACTORY_DASHBOARD_OFF answers dashboard_url null and starts nothing', async () => {
   const h = await makeHome();
   const r = spawnSync(BIN, ['dashboard', '--session', 'board-test'], { env: { ...h.env, FACTORY_DASHBOARD_OFF: '1' }, encoding: 'utf8' });

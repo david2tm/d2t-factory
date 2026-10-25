@@ -93,7 +93,7 @@ test('ORIENT, greenfield (5-2): an open framer blocks a second; a verified one r
   assert.deepEqual(due({ ...s, voided: ['F1', 'E4'] }, OUT), [{ kind: 'spawn', stage: 'FRAME', attempt: 2, role: 'framer', agent: 'd2t-factory:framer' }]);
 });
 
-test('SCAFFOLD: enter_worktree from outside, then the scaffolder, then health and test once it reported a contract', () => {
+test('SCAFFOLD: enter_worktree from outside, then the scaffolder, then install once it reported a contract, then health and test once install passed', () => {
   const w = writer();
   w.put('intake_confirmed', { prompt_fact_id: 'f' }, { actor: 'human' });
   w.put('stage_completed', { stage: 'RECON' });
@@ -107,9 +107,26 @@ test('SCAFFOLD: enter_worktree from outside, then the scaffolder, then health an
   assert.deepEqual(due(w.s, IN), []);
   w.put('step_claimed', { step_id: sc });
   w.put('step_reported', { step_id: sc, output: { status: 'DONE', front: { port: 5100 } } });
+  assert.deepEqual(due(w.s, IN).map((d) => [d.kind, d.check]), [['run_check', 'contract.install']]);
+  const inst = w.issue({ kind: 'run_check', stage: 'SCAFFOLD', attempt: 1, check: 'contract.install' });
+  assert.deepEqual(due(w.s, IN), [], 'install running: nothing else');
+  w.finish(inst, { check: 'contract.install', exit_code: 0 });
   assert.deepEqual(due(w.s, IN).map((d) => [d.kind, d.check]), [['run_check', 'contract.health'], ['run_check', 'contract.test']]);
   w.issue({ kind: 'run_check', stage: 'SCAFFOLD', attempt: 1, check: 'contract.health' });
   assert.deepEqual(due(w.s, IN).map((d) => d.check), ['contract.test']);
+});
+
+test('SCAFFOLD: a failed install issues neither health nor test', () => {
+  const w = writer();
+  w.put('intake_confirmed', { prompt_fact_id: 'f' }, { actor: 'human' });
+  w.put('stage_completed', { stage: 'RECON' });
+  w.put('stage_started', { stage: 'SCAFFOLD', port: 5100, worktree: '/r/.claude/worktrees/factory-r' });
+  const sc = w.issue({ kind: 'spawn', stage: 'SCAFFOLD', attempt: 1, role: 'scaffolder', agent: 'd2t-factory:scaffolder' });
+  w.put('step_claimed', { step_id: sc });
+  w.put('step_reported', { step_id: sc, output: { status: 'DONE', front: { port: 5100 } } });
+  const inst = w.issue({ kind: 'run_check', stage: 'SCAFFOLD', attempt: 1, check: 'contract.install' });
+  w.finish(inst, { check: 'contract.install', exit_code: 7 });
+  assert.deepEqual(due(w.s, IN), []);
 });
 
 test('an open escalation is due as an ask_human step carrying its card, once', () => {

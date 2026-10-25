@@ -1,7 +1,7 @@
 // The only writer of brief.md (AD-10). Each brief lists its input paths explicitly; the agent
 // reads only those and writes only its output_path (AD-2).
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { OVERRIDE_ROLES } from '../core/artifacts.ts';
 import { CUT_LEAD_MS, SLICE_TIMEBOX_DEFAULT_MS, SPEC_MAX_LINES } from '../core/config.ts';
 import type { AnyEvent, Envelope, Finding, Stage } from '../core/events.ts';
@@ -11,7 +11,7 @@ import type { RunState } from '../core/reducer.ts';
 import { appReviewerTools, isAppReviewer, isDiffReviewer, REVIEWERS, SLICE_TAGS, sliceRoster } from '../core/roster.ts';
 import { designMode, isVoided, latestByRole, latestDesign, latestSpec, latestStep, roundFailure, roundOf, sliceDeps, uiReference } from '../core/verify.ts';
 import { readRedactValues } from '../store/load-run.ts';
-import { briefFile } from '../store/paths.ts';
+import { briefFile, playwrightDir } from '../store/paths.ts';
 import { contractOf } from './devserver.ts';
 
 export interface BriefStep { id: string; role: string; stage: Stage; attempt: number; output_path: string; slice?: string }
@@ -42,7 +42,7 @@ const FORMAT: Record<string, string> = {
     'Line 1 `STATUS: DONE`, then the run contract as front matter (JSON for lists and for strings with spaces):',
     '```', 'STATUS: DONE', '---', 'install: "npm ci"', 'add: "npm install --save-exact"', 'start: "npm run dev"', 'url: "http://localhost:<port>"',
     'port: <port>', 'test: "npm test"', 'health: "curl -fsS http://localhost:<port>/"', 'copy_gitignored: [".env"]', 'services: [{"name": "postgres", "shared": true}]', '---', '```',
-    '`port` must be exactly the claimed port above, and `start` must read it from the PORT environment variable. `health` is a command (or an http URL) that succeeds once the app serves. `copy_gitignored` lists the gitignored files (like `.env`) the app needs; the CLI copies them. Install nothing and change no tracked file: this is a brownfield repo.',
+    '`port` must be exactly the claimed port above, and `start` must read it from the PORT environment variable and run the server in the foreground (no `&`, no detach or daemon flag): the factory owns the process and stops it. `health` is a command (or an http URL) that succeeds once the app serves. `copy_gitignored` lists the gitignored files (like `.env`) the app needs; the CLI copies them. The factory runs `install` itself in the worktree, before health and test; you install nothing and add no dependency, and change no tracked file: this is a brownfield repo.',
     ESCALATE('Scaffold failed', 'scaffolder'),
   ].join('\n'),
   // SCAFFOLD on a greenfield run (5-2): the same contract, over a project the scaffolder creates.
@@ -50,7 +50,7 @@ const FORMAT: Record<string, string> = {
     'Create the project the frame describes in the worktree, then write line 1 `STATUS: DONE` and its run contract as front matter (JSON for lists and for strings with spaces):',
     '```', 'STATUS: DONE', '---', 'install: "npm install"', 'add: "npm install --save-exact"', 'start: "npm run dev"', 'url: "http://localhost:<port>"',
     'port: <port>', 'test: "npm test"', 'health: "curl -fsS http://localhost:<port>/"', 'copy_gitignored: []', 'services: []', '---', '```',
-    'The project has its own test runner with at least one passing test (`test` runs it), and `start` serves the app on the port from the PORT environment variable; `port` must be exactly the claimed port above. Add a `.gitignore` for dependencies and build output. Install dependencies only with the contract\'s own `install` (and `add` for one more). `health` is a command (or an http URL) that succeeds once the app serves. `copy_gitignored` is `[]` (the directory had nothing to copy). Never commit: the factory commits the project as the scaffold once its checks pass.',
+    'The project has its own test runner with at least one passing test (`test` runs it), and `start` serves the app on the port from the PORT environment variable, in the foreground (no `&`, no detach or daemon flag: the factory owns the process and stops it); `port` must be exactly the claimed port above. Add a `.gitignore` for dependencies and build output. Install dependencies only with the contract\'s own `install` (and `add` for one more); the factory runs `install` again before health and test. `health` is a command (or an http URL) that succeeds once the app serves. `copy_gitignored` is `[]` (the directory had nothing to copy). Never commit: the factory commits the project as the scaffold once its checks pass.',
     ESCALATE('Scaffold failed', 'scaffolder'),
   ].join('\n'),
   'spec-writer': [
@@ -87,18 +87,24 @@ const FORMAT: Record<string, string> = {
   ].join('\n'),
 };
 
-// The reviewers' shared output format (AD-11); running-app reviewers add `observed:` to each finding.
-function reviewerFormat(role: string): string {
+// Where a running-app reviewer saves its n-th screenshot of a step: an absolute path in its
+// Playwright output dir. @playwright/mcp resolves a bare filename against the client root (the
+// worktree), where a builder commit could pick it up.
+export const screenshotPath = (role: string, stepId: string, n: number | string): string => join(playwrightDir(role), `${stepId}-${n}.png`);
+
+// The reviewers' shared output format (AD-11); running-app reviewers add `observed:` to each finding,
+// and save screenshots at this step's absolute paths.
+function reviewerFormat(role: string, stepId = '<step_id>'): string {
   const app = isAppReviewer(role);
   const example = app
-    ? ['```finding', 'category: Spec miss', 'location: src/signup.js:40', 'failure_scenario: Submitting the form with an empty email shows no error and clears the form.', 'observed: http://localhost:5173/signup after submitting an empty form [~/.factory/playwright/' + role + '/<step_id>-1.png]', '```']
+    ? ['```finding', 'category: Spec miss', 'location: src/signup.js:40', 'failure_scenario: Submitting the form with an empty email shows no error and clears the form.', `observed: http://localhost:5173/signup after submitting an empty form [${screenshotPath(role, stepId, 1)}]`, '```']
     : ['```finding', 'category: Bug', 'location: src/footer.js:12', 'failure_scenario: On a page without <main>, render() throws and the page is blank.', '```'];
   return [
     'Line 1 is your verdict: `VERDICT: APPROVE` when nothing must change, or `VERDICT: FINDINGS` followed by one fenced block per finding:',
     '````', 'VERDICT: FINDINGS', '', ...example, '````',
     `The charter: report a finding only with a concrete failure scenario, and only in one of these categories: ${FINDING_CATEGORIES.join(', ')} (Spec miss = an acceptance criterion not met; Security = a real exploit path; Breakage = failing tests or a convention a maintainer would reject). No nitpicks: every finding is must-fix. \`APPROVE\` has no finding block; \`FINDINGS\` has at least one. Inside a block: category, location (\`<path>:<line>\`) and failure_scenario${app ? ', then `observed: <url> <state> [<screenshot>]`: the page you saw, the state it was in, and a screenshot path if you took one' : ''}, one per line, in that order.`,
     app
-      ? 'Name each screenshot `<step_id>-<n>.png` (this brief\'s step id, n = 1, 2, …), so a later review never overwrites one a finding cites.'
+      ? `Save each screenshot at \`${screenshotPath(role, stepId, '<n>')}\` (n = 1, 2, …): always pass that whole absolute path as the screenshot's filename, never a bare name (a bare name lands in the worktree). Cite the same path in \`observed\`.`
       : 'The factory may restart the dev server while you review: don\'t rely on it (the slice\'s tests already passed).',
     ...(role === 'reviewer-a11y' ? ['Report objective accessibility failures only (a missing label or name, no keyboard path, focus lost or invisible, contrast below WCAG AA, a wrong role), never taste.'] : []),
     'Or, when you cannot review, line 1 `VERDICT: ESCALATE` and line 2 `<Label>: <one line why>` (labels: ' + labelsFor(role) + ').',
@@ -282,8 +288,8 @@ export function briefText(state: RunState, commands: readonly AnyEvent[], step: 
     `step ${step.id} · stage ${step.stage} · attempt ${step.attempt}`,
     '', '## Facts', ...facts.map((f) => `- ${f}`),
     '', '## Read only these inputs', ...inputs(state, step, root).map(([label, p]) => `- ${label}: ${p}`),
-    '', '## Write exactly one file', `${step.output_path}`, 'Write it with the Write tool. Write nothing else under ~/.factory, and never run `factory`.',
-    '', '## Output format', FORMAT[step.role === 'scaffolder' && state.greenfield ? 'scaffolder:greenfield' : step.role] ?? 'Line 1 `STATUS: DONE|ESCALATE`.',
+    '', '## Write exactly one file', `${step.output_path}`, `Write it with the Write tool. Write nothing else under ~/.factory${isAppReviewer(step.role) ? ' except your screenshots, at the paths the output format below gives' : ''}, and never run \`factory\`.`,
+    '', '## Output format', isAppReviewer(step.role) ? reviewerFormat(step.role, step.id) : FORMAT[step.role === 'scaffolder' && state.greenfield ? 'scaffolder:greenfield' : step.role] ?? 'Line 1 `STATUS: DONE|ESCALATE`.',
   ];
   if (prev) parts.push('', `## Your last round on ${sl!.id} did not pass`, quote(redactString(prev.note, values)));
   if (notes.length) parts.push('', '## Notes from the human (newest last)', ...notes.map(quote));
