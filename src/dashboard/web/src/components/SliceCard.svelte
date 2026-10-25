@@ -4,7 +4,7 @@
   // (a cut candidate while the cut card is open), CUT, SIGNAL LOST, evidence-selected. A live slice
   // shows its Time box meter (3-4), amber once over.
   import { selection } from '../lib/drawer.ts';
-  import { isReviewer, laneKey, pendingReviewers, sealsOf, sliceParts, timeboxMeter } from '../lib/model.ts';
+  import { laneKey, pendingReviewers, reviewersAtWork, sealsOf, sliceParts, timeboxMeter } from '../lib/model.ts';
   import type { BoardCard, Lane } from '../lib/types.ts';
   import ClaimList from './ClaimList.svelte';
   import Seal from './Seal.svelte';
@@ -20,12 +20,7 @@
   // One pending row per rostered reviewer with no claim yet (3-3).
   const pending = $derived(pendingReviewers(card));
   const box = $derived(timeboxMeter(card, now));
-  // In review with no verdict since the newest builder report: reviewers are still at it.
-  const reviewing = $derived.by(() => {
-    if (card.state !== 'IN_REVIEW' || pending.length) return false;
-    const built = card.claims.filter((c) => !isReviewer(c.role)).map((c) => c.reported_at).sort().at(-1) ?? '';
-    return !card.claims.some((c) => isReviewer(c.role) && !c.superseded && c.reported_at > built);
-  });
+  const reviewing = $derived(reviewersAtWork(card));
 </script>
 
 <article class="pad" class:live={live && !lost} class:lost={!!lost} class:risk class:cut class:selected class:compact aria-label="Slice {parts.sid}{risk ? ', at risk, cut candidate' : ''}">

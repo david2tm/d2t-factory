@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { NODE_FLOOR } from '../src/core/config.ts';
 import { FactoryError } from '../src/core/errors.ts';
-import { mergeSettings } from '../src/cli/setup.ts';
+import type { Args } from '../src/cli/args.ts';
+import { mergeSettings, setup } from '../src/cli/setup.ts';
 
 const ROOT = join(import.meta.dirname, '..');
 const BIN = join(ROOT, 'bin', 'factory');
@@ -74,6 +75,29 @@ test('unknown verbs fail with BAD_ARGS as JSON on stdout, prototype names includ
     assert.equal(r.out.error.code, 'BAD_ARGS');
     assert.match(r.out.error.message, /unknown verb/);
   }
+});
+
+test('a failed rename onto settings.json removes the tmp file and leaves settings untouched', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'claude-'));
+  const settings = join(dir, 'settings.json');
+  writeFileSync(settings, JSON.stringify({ theme: 'auto' }));
+  const saved = { home: process.env.FACTORY_HOME, settings: process.env.FACTORY_CLAUDE_SETTINGS };
+  process.env.FACTORY_HOME = join(mkdtempSync(join(tmpdir(), 'fh-')), '.factory');
+  process.env.FACTORY_CLAUDE_SETTINGS = settings;
+  let renamed = '';
+  try {
+    assert.throws(() => setup({} as Args, (from) => {
+      renamed = String(from);
+      throw Object.assign(new Error('rename refused'), { code: 'EPERM' });
+    }), (e: unknown) => e instanceof FactoryError && e.code === 'SETUP_FAILED' && /\(EPERM\)/.test(e.message));
+  } finally {
+    for (const [k, v] of [['FACTORY_HOME', saved.home], ['FACTORY_CLAUDE_SETTINGS', saved.settings]] as const) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+  assert.match(renamed, /settings\.json\.factory-\d+\.tmp$/, 'the tmp file was written and only its rename failed');
+  assert.equal(readFileSync(settings, 'utf8'), JSON.stringify({ theme: 'auto' }));
+  assert.deepEqual(readdirSync(dir).sort(), ['settings.json', 'settings.json.before-factory']); // the tmp file is gone
 });
 
 test('settings that are not valid JSON are left alone', () => {

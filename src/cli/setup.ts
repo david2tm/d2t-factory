@@ -44,7 +44,8 @@ export function mergeSettings(settings: Json, home: string): string[] {
   return changed;
 }
 
-export function setup(_args: Args): Json {
+// `rename` is injectable so a test can fail only the rename onto settings.json.
+export function setup(_args: Args, rename = renameSync): Json {
   const home = factoryHome();
   // A sandbox can't create an allow-listed directory that doesn't exist yet (spike 03).
   try {
@@ -79,7 +80,7 @@ export function setup(_args: Args): Json {
       mkdirSync(dirname(file), { recursive: true });
       if (existsSync(file) && !existsSync(`${file}.before-factory`)) copyFileSync(file, `${file}.before-factory`);
       writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n');
-      renameSync(tmp, file);
+      rename(tmp, file);
     } catch (e) {
       // The rename is the only step that touches the original, so on any failure it is unchanged.
       try { rmSync(tmp, { force: true }); } catch { /* nothing to clean up */ }

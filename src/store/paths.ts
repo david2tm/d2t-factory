@@ -1,5 +1,5 @@
 // The only module that resolves paths. Nothing writes under ${CLAUDE_PLUGIN_ROOT}.
-// FACTORY_HOME, FACTORY_CLAUDE_SETTINGS and FACTORY_CLAUDE_PROJECTS exist so tests can point at temp dirs.
+// FACTORY_HOME, FACTORY_CLAUDE_SETTINGS, FACTORY_CLAUDE_PROJECTS and FACTORY_DASHBOARD_DIST exist so tests can point at temp dirs.
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -40,7 +40,7 @@ export const dashboardPidFile = (): string => join(factoryHome(), 'dashboard.pid
 export const dashboardLog = (): string => join(factoryHome(), 'dashboard.log');
 export const cacheDb = (): string => join(factoryHome(), 'cache.sqlite');
 export const dashboardServerEntry = (): string => join(import.meta.dirname, '..', 'dashboard', 'server', 'main.ts');
-export const dashboardDistDir = (): string => join(import.meta.dirname, '..', '..', 'dashboard', 'dist');
+export const dashboardDistDir = (): string => process.env.FACTORY_DASHBOARD_DIST || join(import.meta.dirname, '..', '..', 'dashboard', 'dist');
 
 export const repoDir = (repoHash: string): string => join(factoryHome(), repoHash);
 export const runsDir = (repoHash: string): string => join(repoDir(repoHash), 'runs');

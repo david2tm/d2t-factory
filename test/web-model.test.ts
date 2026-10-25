@@ -8,7 +8,7 @@ import { projectRun, type Lane as CoreLane } from '../src/core/projection.ts';
 import { fold } from '../src/core/reducer.ts';
 import { readLines } from '../src/store/jsonl.ts';
 import {
-  activeCardId, ago, budgetClock, cells, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
+  activeCardId, ago, budgetClock, cells, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
 } from '../src/dashboard/web/src/lib/model.ts';
 import type { Lane } from '../src/dashboard/web/src/lib/types.ts';
 
@@ -209,6 +209,19 @@ test('pendingReviewers (3-3): one row per rostered reviewer with no live claim, 
   for (const state of ['BACKLOG', 'CLOSED', 'CUT']) assert.deepEqual(pendingReviewers({ ...card, state }), [], state);
   assert.deepEqual(pendingReviewers({ ...card, roster: undefined }), [], 'a slice from before 3-3');
   assert.deepEqual(pendingReviewers({ ...card, kind: 'stage' }), []);
+});
+
+test('reviewersAtWork: the generic "reviewers reviewing…" row is only for a slice in review with no pending roster row and no verdict since the newest build', () => {
+  const claim = (role: string, reported_at: string, superseded = false) => ({ step_id: role, role, kind: 'spawn', state: 'verified' as const, reported_at, overdue_at: 't', superseded, evidence: [] });
+  const card = { kind: 'slice' as const, state: 'IN_REVIEW', roster: ['reviewer-code', 'reviewer-ux'], claims: [claim('builder', '2'), claim('reviewer-code', '1')] };
+  assert.deepEqual(pendingReviewers(card), ['reviewer-ux']);
+  assert.equal(reviewersAtWork(card), false, 'pending roster rows already show who is reviewing');
+  const full = { ...card, roster: ['reviewer-code'] };
+  assert.equal(reviewersAtWork(full), true, 'no verdict since the newest build');
+  assert.equal(reviewersAtWork({ ...full, claims: [claim('builder', '2'), claim('reviewer-code', '3')] }), false, 'a verdict after it');
+  assert.equal(reviewersAtWork({ ...full, claims: [claim('builder', '2'), claim('reviewer-code', '1'), claim('reviewer-code', '3', true)] }), true, 'a superseded verdict does not count');
+  assert.equal(reviewersAtWork({ ...full, roster: undefined }), true, 'a slice from before 3-3');
+  assert.equal(reviewersAtWork({ ...full, state: 'BUILDING' }), false);
 });
 
 test('time box meter (3-4): `12 / 30 min` against the browser clock, amber (over) once the end passed; none without a running box', () => {

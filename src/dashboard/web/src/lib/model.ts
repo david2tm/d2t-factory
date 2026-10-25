@@ -203,6 +203,14 @@ export function pendingReviewers(card: Pick<BoardCard, 'kind' | 'state' | 'roste
   return card.roster.filter((r) => !claimed.has(r));
 }
 
+// The Verdict list's generic "reviewers reviewing…" row: a slice in review with no verdict since the
+// newest builder report. Pending roster rows already say who is at it, so with any of those, none.
+export function reviewersAtWork(card: Pick<BoardCard, 'kind' | 'state' | 'roster' | 'claims'>): boolean {
+  if (card.state !== 'IN_REVIEW' || pendingReviewers(card).length) return false;
+  const built = card.claims.filter((c) => !isReviewer(c.role)).map((c) => c.reported_at).sort().at(-1) ?? '';
+  return !card.claims.some((c) => isReviewer(c.role) && !c.superseded && c.reported_at > built);
+}
+
 // The Time box meter of a live slice (3-4): `12 / 30 min`, the share used (0..1), and over (amber)
 // once the net elapsed time reaches the limit. Null without a running box (paused while escalated).
 export function timeboxMeter(card: Pick<BoardCard, 'timebox_ends_at' | 'timebox_min'>, now: number): { text: string; fill: number; over: boolean } | null {

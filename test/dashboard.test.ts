@@ -44,7 +44,7 @@ async function makeHome(): Promise<Home> {
   const agents = join(base, 'agents.json');
   writeFileSync(agents, JSON.stringify([{ sessionId: 'live-session' }]));
   const env: NodeJS.ProcessEnv = { ...process.env, FACTORY_HOME: home, FACTORY_CLAUDE_AGENTS_JSON: agents };
-  for (const k of ['FACTORY_DASHBOARD_OFF', 'CLAUDE_CODE_SESSION_ID']) delete env[k];
+  for (const k of ['FACTORY_DASHBOARD_OFF', 'FACTORY_DASHBOARD_DIST', 'CLAUDE_CODE_SESSION_ID']) delete env[k];
   const h = { home, port, agents, env };
   homes.push(h);
   return h;
@@ -324,6 +324,24 @@ test('the built SPA: / and /replay/<name> serve dashboard/dist/index.html, asset
     assert.equal(r.status, 404, p);
     assert.equal(r.body.error?.code, 'NOT_FOUND', p);
   }
+});
+
+// Without a build (FACTORY_DASHBOARD_DIST at an empty dir): a placeholder at / and /replay/<name>, 404 elsewhere.
+test('no dist: / and /replay/<name> serve the placeholder page, and other paths are a 404', LISTEN, async () => {
+  const h = await makeHome();
+  h.env.FACTORY_DASHBOARD_DIST = mkdtempSync(join(tmpdir(), 'factory-nodist-'));
+  dashboard(h);
+  for (const p of ['/', '/replay/x', '/replay/demo/']) {
+    const r = await get(h, p);
+    assert.deepEqual([r.status, r.type], [200, 'text/html; charset=utf-8'], p);
+    assert.match(r.body, /The board UI is not built yet/, p);
+    assert.doesNotMatch(r.body, /id="app"/, p);
+  }
+  for (const p of ['/assets/index.js', '/replay/x/y', '/replay/', '/elsewhere', '/index.html']) {
+    const r = await get(h, p);
+    assert.deepEqual([r.status, r.body.error?.code], [404, 'NOT_FOUND'], p);
+  }
+  assert.equal((await get(h, '/api/health')).status, 200, 'the API is unaffected');
 });
 
 test('signal lost: a working run silent past signal_lost_at whose holder is not in claude agents --json; a live holder keeps it', LISTEN, async () => {

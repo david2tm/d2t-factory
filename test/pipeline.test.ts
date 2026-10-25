@@ -1902,6 +1902,39 @@ test('git.deps (3-4) diffs only the slice\'s own builder commits: a dependency S
   ok(decide(w, s, 'abandon', { cwd: wt }));
 });
 
+test('Non-convergence (3-4) lists only the capped slice\'s own dependency files: S1\'s accepted package.json change is not offered again on S2\'s card', (t) => {
+  const w = world();
+  const s = 'sa';
+  const r = toGate2(w, s, t, NO_SERVER, {}, [{ id: 'S1', title: 'Pad', acs: ['AC-1'] }, { id: 'S2', title: 'Text', acs: ['AC-2'] }]);
+  const { id, c, wt } = r;
+  ok(decide(w, s, 'approve gate2', { cwd: wt }));
+  const pkg = readFileSync(join(wt, 'package.json'), 'utf8');
+  const b1 = c.take(byKind('spawn', 'builder'));
+  ok(builds(r, b1, { 'pad.js': '1\n', 'package.json': pkg.replace('"private": true', '"private": true,\n  "dependencies": { "left-pad": "1.3.0" }') }, 'ag-b1'));
+  c.checks();
+  const [rv1, b2] = c.next().steps;
+  c.claim(rv1.step_id);
+  c.claim(b2.step_id);
+  ok(c.agent(rv1, approveOut(), 'ag-rv1'));
+  assert.equal(c.take(card('escalation')).card.title, 'New dependency (S1)');
+  ok(decide(w, s, 'rule E1 accept', { cwd: wt }));
+  // S2's builder adds its own dependency file; every round's review returns FINDINGS up to the cap.
+  ok(builds(r, b2, { 'text.js': '1\n', 'requirements.txt': 'requests==2.32.3\n' }, 'ag-b2'));
+  c.checks();
+  assert.equal(stateOf(w, id).slices.S1.state, 'CLOSED', 'accepted: S1 closed');
+  ok(c.agent(c.take(byKind('spawn', 'reviewer-code')), findingsOut('text() drops the last line'), 'ag-rv2'));
+  for (const n of [2, 3]) {
+    ok(builds(r, c.take(byKind('resume', 'builder')), { 'text.js': `${n}\n` }, 'ag-b2'));
+    assert.deepEqual(c.checks().map((x) => x.passed), [true]);
+    ok(c.agent(c.take(byKind('spawn', 'reviewer-code')), findingsOut('text() still drops the last line'), `ag-rv${n + 1}`));
+  }
+  const nc = c.take(card('escalation'));
+  assert.deepEqual([nc.card.title, nc.card.reason_label], ['Non-convergence (S2)', 'Non-convergence']);
+  assert.equal(nc.card.reason, 'S2 is not done after 2 builder rounds: reviewer-code still reports 1 finding · accept also accepts new dependencies: requirements.txt');
+  assert.deepEqual(stateOf(w, id).rejected, []);
+  ok(decide(w, s, 'abandon', { cwd: wt }));
+});
+
 test('cut while the builder works (3-4): an Over time box `cut` of S1 with its builder claimed issues no new builder until that builder\'s done, which commits and reports it unverified; then it is cancelled. S1\'s retry note never reaches S2\'s builder', (t) => {
   const w = world();
   const s = 'sa';
