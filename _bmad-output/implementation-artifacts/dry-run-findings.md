@@ -1,0 +1,27 @@
+# Dry run 1 — findings (2026-10-25)
+
+Brownfield dry run on `maciekt07/TodoApp` (Vite + React + MUI, no server), task "add an optional task giver to each todo". Run `add-when-adding-a-new-to-k8zp`, stopped in BUILD at slice S2 of 5. The run's state, worktree and transcripts were deleted afterwards, so the evidence below is all that's left.
+
+**Passed:** `/clear` rebind and resume (the new session took over the run with `session_bound … supersedes`, `/factory approve intake` passed and the intake step verified); the main checkout stayed clean; gate 1 and gate 2 recorded the human's commands; S1 built, tested and was approved by reviewer-code; the escalation card UI.
+
+Recorded as observations only. Decisions come later.
+
+| # | Kind | Finding | Evidence |
+|---|---|---|---|
+| 1 | setup | With the sandbox on, local port binding is off by default, so the dashboard (and the dev server) can't listen. The only message is a log path. `factory setup` doesn't add or check `sandbox.network.allowLocalBinding`. | `dashboard.log`: `listen EPERM: operation not permitted 127.0.0.1:4870` |
+| 2 | product | The time limit is mandatory (`limit_min` > 0, `src/core/artifacts.ts:64`) and worded as "the time limit for the whole exercise" (`src/cli/brief.ts:316`). It shows in the intake question, the intake card (`limit 2:00`), the cut card, the time-box escalation and the dashboard budget clock, which advertises an interview setting. | the INTAKE question asked "Did you start before this run?" |
+| 3 | UX | Cards don't mark the next step: no "type this to continue", no "what happens next", no "reply in chat to change". | intake confirm card printed as title, fields, `/factory approve intake` |
+| 4 | UX | The intake confirm card ("confirm the task") shows only the four fields, not the agreed task or scope. | `intakeConfirmCard`, `src/core/cards.ts:22` |
+| 5 | dashboard | A claim waiting on a human decision or on checks turns red `UNVERIFIED · no hook fact` after 30 s (`CLAIM_OVERDUE_MS`), even though the hook facts are there. It reads as a caught false claim. | INTAKE `ask_human` before `/factory approve intake`; `scaffolder` while checks failed |
+| 6a | **blocker** | Brownfield never runs the contract's `install` in the worktree. The scaffolder brief says "install nothing", and the CLI never executes `install` (it appears only in `CONTRACT_STRINGS`). Because the worktree sits under the repo, Vite resolved the main checkout's `node_modules` and the sandbox refused its write. | `EPERM … /Users/d2t/Projects/TodoApp/node_modules/.vite-temp/vite.config.ts.timestamp-….mjs`; worktree had no `node_modules` |
+| 6b | design | SCAFFOLD failures aren't split into factory-fixable ones (missing install, broken tool cache) and project ones (env, DB). Every failure pages the human. | Puppeteer's half-downloaded `chrome-headless-shell` failed `npm ci`; skipping the download fixed it |
+| 7 | UX | The scaffold-failure card gives only exit codes, and the write guard stops the conductor from reading check outputs, so no surface says why. | card reason `contract.health failed (exit 1); contract.test failed (exit 1)` |
+| 8 | dashboard | The human must read and approve artifacts (spec, `design.md`, slice plan), but the dashboard shows their paths only as plain text (`Drawer.svelte:84`). Wanted: a copy-path button and a read-only view of the pinned bytes each gate approves (served only from the run's artifacts, redacted). | — |
+| 9 | **bug** | The Stop hook blocks forever after a human interrupt or rejected tool call. The run isn't "waiting on the human" by its rules, so it blocked 9 times and Claude Code then forced the turn to end. That 9-block cap also limits the CAP-14 "can't stop while working" guarantee. | `factory done` rejected by the user at 15:24:41; 9× `Stop hook feedback: … step … (spawn d2t-factory:reviewer-ui) is claimed and not running in the background` |
+| 10 | **bug** | The escalation-label regex `/^([A-Za-z ]+): (\S.*)$/` (`src/core/output.ts:78`) can't match `Non-convergence` because of the hyphen, so that label is always rejected. No test covers it. Reviewers who can't see the app have no working label; the retry picked `Scaffold failed`, which only the scaffolder may use. | `node -e '/^([A-Za-z ]+): (\S.*)$/.exec("Non-convergence: x")'` → `null` |
+| 11 | **bug** | A failed dev server restart goes unnoticed. At S2 the CLI's new server (pid 86159) died with `Port 5100 is already in use`, while an orphan from the SCAFFOLD retry (pid 77176) kept serving pre-S1 code. The health check `curl` passed against the orphan and recorded the dead pid as healthy. Likely causes, unconfirmed: the Claude sandbox blocks signals across commands (`kill` → `operation not permitted`, and `alive()` treats `EPERM` as alive), so `stop()` can't kill the old server; and file watching may not work under the sandbox, so the old server never reloads. | `devserver.log`: `Error: Port 5100 is already in use`; `lsof` showed pid 77176 with cwd in the worktree; reviewer-ui: `does not provide an export named TASK_GIVER_MAX_LENGTH` |
+| 12 | bug | Running-app reviewers save screenshots into the worktree root, where a builder commit can pick them up. | `?? 01M5STH254WW4GP5JATPFEGW4D-1.png` (and two more) in the worktree |
+
+## Not reached
+
+WRAP, merge (and the commit-hook question from `deferred-work.md`), recording and replay, the cut card, Run B (greenfield) and Run C (parallel).
