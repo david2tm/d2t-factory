@@ -34,7 +34,10 @@ function world(): World {
   mkdirSync(repo);
   const g = (...a: string[]): void => { execFileSync('git', a, { cwd: repo, stdio: 'ignore' }); };
   g('init', '-q');
-  g('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'init');
+  // One tracked file: a repo whose HEAD tree is empty would be a greenfield run (5-2).
+  writeFileSync(join(repo, 'README.md'), '# demo\n');
+  g('add', 'README.md');
+  g('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
   // FACTORY_DASHBOARD_OFF: start and resume answer dashboard_url null and never spawn a server.
   return { base, home, projects, agents, repo, env: { FACTORY_HOME: home, FACTORY_CLAUDE_PROJECTS: projects, FACTORY_CLAUDE_AGENTS_JSON: agents, FACTORY_DASHBOARD_OFF: '1' } };
 }
@@ -129,11 +132,18 @@ test('start consumes the task prompt, embeds it in run_started, then binds the s
   fails(run(w, ['start', '--session', 'sa']), 'NO_HUMAN_PROMPT');
 });
 
-test('start refuses outside a git repo, before setup, and without plugin-env.json', () => {
+test('start refuses before setup and without plugin-env.json; outside a git repo it initialises a greenfield run (5-2), and a repo with tracked files stays brownfield', () => {
   const w = world();
   say(w, 'sa', 'add login');
+  const brown = ok(run(w, ['start', '--session', 'sa'])).run_id;
+  assert.equal(commands(w, brown)[0].data.greenfield, undefined, 'brownfield: run_started is unchanged');
   const outside = mkdtempSync(join(tmpdir(), 'factory-nogit-'));
-  fails(run(w, ['start', '--session', 'sa'], { cwd: outside }), 'BAD_ARGS', /not inside a git repository/);
+  say(w, 'sb', 'add login');
+  const green = ok(run(w, ['start', '--session', 'sb'], { cwd: outside })).run_id;
+  const rs = commands(w, green)[0];
+  assert.equal(rs.data.greenfield, true);
+  assert.equal(rs.data.base_sha, execFileSync('git', ['rev-parse', 'HEAD'], { cwd: outside, encoding: 'utf8' }).trim());
+  assert.equal(execFileSync('git', ['log', '--format=%s'], { cwd: outside, encoding: 'utf8' }), 'factory: init\n');
   rmSync(join(w.home, 'plugin-env.json'));
   fails(run(w, ['start', '--session', 'sa']), 'SETUP_REQUIRED', /restart the session/);
   rmSync(join(w.home, 'node'));

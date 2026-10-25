@@ -38,7 +38,10 @@ function world(): World {
   mkdirSync(repo);
   const g = (...a: string[]): void => { execFileSync('git', a, { cwd: repo, stdio: 'ignore' }); };
   g('init', '-q');
-  g('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'init');
+  // One tracked file: a repo whose HEAD tree is empty would be a greenfield run (5-2).
+  writeFileSync(join(repo, 'README.md'), '# demo\n');
+  g('add', 'README.md');
+  g('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
   return {
     base, home, projects, repo, sock,
     env: {

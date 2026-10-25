@@ -28,7 +28,7 @@ import { claimPort, refusedExclusive, releaseClaims, scaffoldConflict } from './
 import { appendAll, gateOrThrow, makeEvent, stepView } from './commit.ts';
 import { contractOf, devserverDown } from './devserver.ts';
 import {
-  currentBranch, diffNames, diffStat, head, isAncestor, mergeInProgress, mergeInto, repoRoot, sha256, statusDigest, trackedClean, worktreeRemove,
+  commitAll, currentBranch, diffNames, diffStat, dirty, head, headTreeEmpty, isAncestor, mergeInProgress, mergeInto, repoRoot, sha256, statusDigest, trackedClean, worktreeRemove,
 } from './git.ts';
 import { writeRecording } from './record.ts';
 import { requireHolder, requireRun, requireSession } from './resolve.ts';
@@ -122,7 +122,7 @@ function probe(run: LoadedRun, c: Ctx, cwd: string, holder: boolean): ScheduleCt
   const { state } = run;
   return {
     in_worktree: inWorktree(cwd, state.worktree),
-    recon_cached: state.phase === 'ORIENT' && !latestByRole(state, 'recon') && !reconRerun(run) && readCache(c.hash, state.base_sha ?? '') !== null,
+    recon_cached: state.phase === 'ORIENT' && !state.greenfield && !latestByRole(state, 'recon') && !reconRerun(run) && readCache(c.hash, state.base_sha ?? '') !== null,
     ...(state.phase === 'BUILD' ? { resume_agents: resumeAgents(run) } : {}),
     ...(state.phase === 'WRAP' ? { wrap: wrapProbe(c, state, holder) } : {}),
   };
@@ -159,21 +159,30 @@ function publishRecon(c: Ctx, state: RunState, text: string, overwrite = false):
 // checkout is checked against the baseline; stage_completed embeds the context and its sha256.
 // A changed checkout is recorded here and stops the run at SCAFFOLD's own baseline check. After a
 // RECON rerun (3-4) the new output overwrites the cache, and a verified scaffolder (the worktree and
-// its run contract stand) completes SCAFFOLD at once.
+// its run contract stand) completes SCAFFOLD at once. Greenfield (5-2): the verified framer output
+// itself is embedded (in the same `recon` field) under stage FRAME; nothing goes to the cache.
 function completeOrient(c: Ctx, run: LoadedRun, ctx: ScheduleCtx): AnyEvent[] {
   const { state } = run;
-  const r = latestByRole(state, 'recon');
-  if (r && isVerified(state, r)) {
-    const text = readFileSync(r.output_path!, 'utf8');
-    publishRecon(c, state, text, reconRerun(run));
-  } else if (!(ctx.recon_cached && !r)) return [];
-  const text = readCache(c.hash, state.base_sha!);
+  const role = state.greenfield ? 'framer' : 'recon';
+  const r = latestByRole(state, role);
+  let path: string;
+  let text: string | null;
+  if (state.greenfield) {
+    if (!r || !isVerified(state, r)) return [];
+    path = r.output_path!;
+    text = readFileSync(path, 'utf8');
+  } else {
+    if (r && isVerified(state, r)) publishRecon(c, state, readFileSync(r.output_path!, 'utf8'), reconRerun(run));
+    else if (!(ctx.recon_cached && !r)) return [];
+    path = reconFile(c.hash, state.base_sha!);
+    text = readCache(c.hash, state.base_sha!);
+  }
   if (text === null) return [];
-  const parsed = checkOutput('recon', text);
+  const parsed = checkOutput(role, text);
   const front = parsed.ok ? parsed.front : {};
   const b = baselineCheck(c, state);
-  const recon = redact({ path: reconFile(c.hash, state.base_sha!), sha256: sha256(text), context: front }, readRedactValues(c.hash, c.runId));
-  const events = [b.event, makeEvent(c.runId, 'stage_completed', { stage: 'RECON', recon }, { corr: r?.id ?? b.event.id })];
+  const recon = redact({ path, sha256: sha256(text), context: front }, readRedactValues(c.hash, c.runId));
+  const events = [b.event, makeEvent(c.runId, 'stage_completed', { stage: state.greenfield ? 'FRAME' : 'RECON', recon }, { corr: r?.id ?? b.event.id })];
   const sc = latestByRole(state, 'scaffolder');
   if (sc && isVerified(state, sc)) events.push(makeEvent(c.runId, 'stage_completed', { stage: 'SCAFFOLD' }, { corr: sc.id }));
   return events;
@@ -190,14 +199,19 @@ function startScaffold(c: Ctx, state: RunState): AnyEvent[] {
 // live run holding exclusive/ blocks any run; a run whose contract lists a shared service claims
 // it, and is blocked by a live run already past SCAFFOLD); then step_verified or the
 // scaffold_failure card naming every failure. A blocked run can only retry (once the other run
-// ends) or abandon: no accept.
+// ends) or abandon: no accept. Greenfield (5-2): with nothing else failing, the CLI commits the
+// scaffolded project as `factory: scaffold (<step_id>)`; a scaffolder that created no project files
+// fails. A greenfield failure offers retry or abandon only.
 function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
   const { state } = run;
   const steps = (['contract.health', 'contract.test'] as const).map((k) => latestCheckStep(state, k, sc.issued_seq));
   if (steps.some((st) => !st || st.state !== 'verified')) return [];
   const checks = steps.map((st) => checkById(state, st!.output?.check_id));
   const t0 = Date.now();
-  const clean = gitCheck(c, state, 'git.worktree_clean', trackedClean(state.worktree!), { command: 'git status --porcelain=v2 --untracked-files=no' }, t0);
+  const wt = state.worktree!;
+  const clean = gitCheck(c, state, 'git.worktree_clean', trackedClean(wt), { command: 'git status --porcelain=v2 --untracked-files=no' }, t0);
+  const changed = state.greenfield && dirty(wt);
+  const empty = state.greenfield && !changed && headTreeEmpty(wt);
   const base = baselineCheck(c, state);
   const services = contractOf(state)?.services;
   const shared = Array.isArray(services) && services.some((x) => (x as { shared?: unknown }).shared === true);
@@ -207,14 +221,18 @@ function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
     (clean.data as { exit_code: number }).exit_code === 0 ? null : 'tracked files changed in the worktree',
     base.pass ? null : 'the main checkout differs from its baseline',
     conflict ? refusedExclusive(conflict) : null,
+    empty ? 'the scaffolder created no project files' : null,
   ].filter((x): x is string => Boolean(x));
   const events = [clean, base.event];
   if (failures.length) {
-    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict })));
+    // Greenfield offers no accept: an accepted scaffold would have no scaffold commit.
+    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict && !state.greenfield })));
   } else {
+    // Idempotent: a round that is not appended leaves the commit, and the next finds a clean worktree.
+    const scaffold = state.greenfield ? [`scaffold:${changed ? commitAll(wt, `factory: scaffold (${sc.id})`) : head(wt)}`] : [];
     const out = readOutput(state, sc);
     const ev = evidenceFor(run, sc, out);
-    const evidence = [...checks.map((x) => x!.id), clean.id, base.event.id, ...(ev.ok ? ev.evidence : [])];
+    const evidence = [...checks.map((x) => x!.id), clean.id, base.event.id, ...scaffold, ...(ev.ok ? ev.evidence : [])];
     events.push(makeEvent(c.runId, 'step_verified', { step_id: sc.id, evidence }, { corr: sc.id }));
   }
   return events;
@@ -382,7 +400,7 @@ async function prepare(c: Ctx, run: LoadedRun, ctx: ScheduleCtx, cwd: string): P
     const ev = stepEvents(c, run, st, ctx, cwd);
     if (ev.length) return { events: ev };
   }
-  if (state.phase === 'ORIENT' && !state.greenfield) return { events: completeOrient(c, run, ctx) };
+  if (state.phase === 'ORIENT') return { events: completeOrient(c, run, ctx) };
   if (state.phase === 'SCAFFOLD') {
     if (!state.worktree) return { events: startScaffold(c, state) };
     const sc = latestByRole(state, 'scaffolder');

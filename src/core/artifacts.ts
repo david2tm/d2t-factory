@@ -162,6 +162,7 @@ export function slicePlanEntries(f: Record<string, unknown> | undefined): SliceP
 
 const SCHEMA: Record<string, (f: Record<string, unknown>, body: string) => Valid<unknown>> = {
   recon: validateContext,
+  framer: validateContext, // FRAME (5-2): the same context schema as RECON
   scaffolder: validateRunContract,
   'spec-writer': validateSpec,
   builder: validateBuilder,
@@ -179,9 +180,13 @@ export type AgentOutput =
     question?: DesignQuestion; // the designer: its one ```question block (invent mode only)
   };
 
-// What checkOutput needs beyond the text: the claimed port (scaffolder), and for the designer the
-// mode the run's context implies and whether the run's one design question was already answered.
-export interface OutputOpts { port?: number; mode?: DesignMode; no_question?: boolean }
+// What checkOutput needs beyond the text: the claimed port (scaffolder), for the designer the mode
+// the run's context implies and whether the run's one design question was already answered, and for
+// the orientation roles the run's origin (5-2).
+export interface OutputOpts { port?: number; mode?: DesignMode; no_question?: boolean; origin?: Context['origin'] }
+
+// AD-27 (5-2): RECON maps a brownfield repo, FRAME frames a greenfield one.
+export const originOf = (role: string | undefined): Context['origin'] | undefined => (role === 'framer' ? 'greenfield' : role === 'recon' ? 'brownfield' : undefined);
 
 // A parse or schema error means the agent must redo the step (MISSING_EVIDENCE + reissue).
 export function checkOutput(role: string | undefined, text: string, o: OutputOpts = {}): AgentOutput {
@@ -193,6 +198,8 @@ export function checkOutput(role: string | undefined, text: string, o: OutputOpt
   const out = { ok: true as const, status: v.value, escalation: v.escalation, front: v.front, body: v.body };
   // Intake has no one to escalate to: the human is in the conversation (or abandons the run).
   if (role === 'intake' && v.value !== 'DONE') return { ok: false, error: 'line 1 must be `STATUS: DONE`: settle open questions with the human, then write the intake' };
+  // FRAME asks the human nothing (5-2): every open decision is the framer's to make.
+  if (role === 'framer' && v.value !== 'DONE') return { ok: false, error: 'line 1 must be `STATUS: DONE`: FRAME asks the human nothing; decide and write the frame' };
   if (v.value === 'ESCALATE') return out;
   if (reviewer) {
     // FINDINGS needs at least one finding and APPROVE none: a verdict and its findings never disagree.
@@ -211,6 +218,11 @@ export function checkOutput(role: string | undefined, text: string, o: OutputOpt
     const r = schema(v.front, v.body);
     if (!r.ok) return { ok: false, error: `front matter: ${r.errors.join('; ')}` };
   }
+  // The origin is the role's (5-2): a framer frames greenfield, recon maps brownfield; and the role
+  // must be the one the run's origin (o.origin) orients with.
+  const want = originOf(role);
+  if (want && v.front.origin !== want) return { ok: false, error: `front matter: origin must be ${want} in a ${role} output` };
+  if (want && o.origin && o.origin !== want) return { ok: false, error: `a ${role} output on a ${o.origin} run: it orients with ${o.origin === 'greenfield' ? 'framer' : 'recon'}` };
   if (role === 'designer') {
     if (o.mode && v.front.mode !== o.mode) return { ok: false, error: `front matter: mode must be ${o.mode} for this run's context` };
     const q = parseQuestion(v.body);

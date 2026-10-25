@@ -22,7 +22,7 @@ import { currentPlan, mergedCheck } from './check.ts';
 import { releaseClaims } from './claims.ts';
 import { appendAll, gate, gateOrThrow, makeEvent } from './commit.ts';
 import { devserverDown } from './devserver.ts';
-import { currentBranch, head, mergeInto, repoHash, repoRoot, sha256, statusDigest } from './git.ts';
+import { currentBranch, head, insideRepo, mergeInto, repoHash, repoRoot, sha256, statusDigest } from './git.ts';
 import { consumeWith, embed, newestPrompt, supersede, type Prompt } from './prompt.ts';
 import { isRun, requireSession, resolveRun, type Resolution } from './resolve.ts';
 import { reissueEvent, type Ctx } from './steps.ts';
@@ -65,8 +65,9 @@ function pinOf(st: Step | undefined): Pin | { error: string } | null {
 // The CLI's own slice asks (no open subject step): a round's Non-convergence, New dependency, and
 // (3-4) Over time box.
 const CLI_SLICE_ASKS = ['Non-convergence', 'New dependency', 'Over time box'];
-// AD-33: the stages a rerun goes back to (FRAME: greenfield, 5-2).
-const RERUN_STAGES: readonly Stage[] = ['RECON', 'SPEC', 'DESIGN', 'SLICE_PLAN'];
+// AD-33: the stages a rerun goes back to. The orientation stage is the run's own: RECON on
+// brownfield, FRAME on greenfield (5-2).
+const RERUN_STAGES: readonly Stage[] = ['RECON', 'FRAME', 'SPEC', 'DESIGN', 'SLICE_PLAN'];
 
 // The decision's data and side events, or a refusal (the prompt is consumed either way).
 function build(p: Prompt, c: Ctx, run: LoadedRun, kind: DecisionKind, base: Record<string, unknown>, probe?: MergeProbe): Built {
@@ -223,9 +224,9 @@ function build(p: Prompt, c: Ctx, run: LoadedRun, kind: DecisionKind, base: Reco
       // The voids send the stage and everything after it back; every open ask closes and its card
       // (and subject) is cancelled. Code already built stays on the run branch.
       const stage = base.stage as Stage;
-      if (stage === 'FRAME') refuse(p, 'ILLEGAL_TRANSITION', 'rerun FRAME: greenfield lands in 5-2');
       if (!RERUN_STAGES.includes(stage)) refuse(p, 'ILLEGAL_TRANSITION', `rerun ${stage}: only ${RERUN_STAGES.join(', ')} can be rerun`);
-      if (stage === 'RECON' && state.greenfield) refuse(p, 'ILLEGAL_TRANSITION', 'rerun RECON: a greenfield run orients with FRAME (5-2)');
+      if (stage === 'RECON' && state.greenfield) refuse(p, 'ILLEGAL_TRANSITION', 'rerun RECON: a greenfield run orients with FRAME');
+      if (stage === 'FRAME' && !state.greenfield) refuse(p, 'ILLEGAL_TRANSITION', 'rerun FRAME: a brownfield run orients with RECON');
       if (!isParked(state)) {
         const busy = openSteps(state).find((st) => st.kind !== 'ask_human' && !askOpenFor(state, st.id));
         refuse(p, 'ILLEGAL_TRANSITION', `rerun ${stage}: only while parked at a card${busy ? `; step ${busy.id} (${busy.role ?? busy.check ?? busy.kind}) is ${busy.state}` : '; no card is open'}`);
@@ -272,18 +273,21 @@ export async function decide(args: Args): Promise<unknown> {
   const extra = Object.keys(args.flags).filter((f) => f !== 'session');
   if (args.positionals.length || extra.length) throw new FactoryError('BAD_ARGS', 'factory decide takes no decision arguments; it reads the typed /factory prompt');
   const cwd = process.cwd();
-  const hash = repoHash(cwd);
+  // 5-2: outside a git repo there is no run: a task or bare /factory resolves to none (`start`
+  // initialises the directory), and a decision is NOT_FOUND. Nothing is written to the directory.
+  const hash = insideRepo(cwd) ? repoHash(cwd) : null;
   const p = newestPrompt(session); // forged → consumed + NO_HUMAN_PROMPT
   supersede(p.older);
 
   if (!('decision' in p.parsed)) {
     // Not consumed: `start` / `resume` consume it and act only on it.
     const parsed = p.parsed;
-    const resolution: Resolution = resolveRun(cwd, hash, parsed.intent === 'resume' && parsed.run_id ? { runId: parsed.run_id } : {});
+    const resolution: Resolution = hash === null ? { none: true } : resolveRun(cwd, hash, parsed.intent === 'resume' && parsed.run_id ? { runId: parsed.run_id } : {});
     return { ...parsed, prompt_id: p.prompt_id, resolution };
   }
 
   const dec = p.parsed.decision;
+  if (hash === null) refuse(p, 'NOT_FOUND', `${cwd} is not inside a git repository: no run to decide on`);
   let r: Resolution;
   try {
     r = resolveRun(cwd, hash, { runId: dec.run_id, boundSession: session });

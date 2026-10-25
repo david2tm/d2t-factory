@@ -36,6 +36,23 @@ test('checkOutput: protocol + role schema; ESCALATE skips the schema; a wrong po
   assert.match((checkOutput('reviewer-code', 'STATUS: DONE\n') as { error: string }).error, /VERDICT/);
 });
 
+test('the orientation roles (5-2): framer shares the context schema; framer must say greenfield and recon brownfield; FRAME never escalates; the run\'s origin must match the role', () => {
+  const ctx = (origin: string, extra = '') => `STATUS: DONE\n---\norigin: ${origin}\nui_surface: true\n${extra}---\n# Frame\n`;
+  const frame = checkOutput('framer', ctx('greenfield', 'ui_reference: "shadcn/ui"\n'), { origin: 'greenfield' });
+  assert.ok(frame.ok && frame.front.ui_reference === 'shadcn/ui', JSON.stringify(frame));
+  assert.ok(checkOutput('recon', ctx('brownfield'), { origin: 'brownfield' }).ok);
+  assert.ok(checkOutput('recon', ctx('brownfield')).ok, 'the role alone decides the origin');
+  assert.deepEqual(checkOutput('framer', ctx('brownfield')), { ok: false, error: 'front matter: origin must be greenfield in a framer output' });
+  assert.deepEqual(checkOutput('recon', ctx('greenfield')), { ok: false, error: 'front matter: origin must be brownfield in a recon output' });
+  assert.match((checkOutput('framer', 'STATUS: DONE\n---\norigin: greenfield\n---\n') as { error: string }).error, /front matter: ui_surface must be true or false/);
+  assert.match((checkOutput('framer', 'STATUS: DONE\nno front matter') as { error: string }).error, /front matter missing/);
+  assert.match((checkOutput('framer', 'STATUS: ESCALATE\nScope change: which stack?\n') as { error: string }).error, /FRAME asks the human nothing/);
+  assert.match((checkOutput('recon', ctx('brownfield'), { origin: 'greenfield' }) as { error: string }).error, /a recon output on a greenfield run: it orients with framer/);
+  assert.match((checkOutput('framer', ctx('greenfield'), { origin: 'brownfield' }) as { error: string }).error, /a framer output on a brownfield run: it orients with recon/);
+  // Other roles ignore the run's origin.
+  assert.ok(checkOutput('scaffolder', `STATUS: DONE\n---\n${Object.entries(CONTRACT).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n')}\n---\n`, { origin: 'greenfield' }).ok);
+});
+
 const SPEC_FRONT = {
   acceptance: [{ id: 'AC-1', check: { kind: 'command', command: 'npm test' } }, { id: 'AC-2', check: { kind: 'page', page: '/ shows a footer' } }],
   assumptions: ['Footer is on every page', 'Year is the current year'],

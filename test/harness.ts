@@ -1,6 +1,7 @@
 // End-to-end harness for the pipeline tests: a temp FACTORY_HOME and projects dir, a brownfield
-// git repo with real package.json scripts, the 1-2 prompt writer (`say`), the CLI (`run`), and the
-// 1-3 hooks themselves for agent facts (`agentWrites`, `agentStops`). Not a test file.
+// git repo with real package.json scripts (or, 5-2, an empty non-git dir), the 1-2 prompt writer
+// (`say`), the CLI (`run`), and the 1-3 hooks themselves for agent facts (`agentWrites`,
+// `agentStops`). Not a test file.
 import { strict as assert } from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -29,7 +30,14 @@ export function git(cwd: string, ...a: string[]): string {
   return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' });
 }
 
-export function world(): World {
+// The brownfield project's files; a greenfield scaffolder writes the same node app (5-2).
+export const APP_FILES: Readonly<Record<string, string>> = FILES;
+export function writeApp(dir: string): void {
+  for (const [f, text] of Object.entries(FILES)) writeFileSync(join(dir, f), text);
+}
+
+// `empty` (5-2): the repo is an empty, non-git directory (a greenfield run's start).
+export function world(o: { empty?: boolean } = {}): World {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'factory-pipe-')));
   const home = join(base, '.factory');
   mkdirSync(home);
@@ -41,12 +49,14 @@ export function world(): World {
   writeFileSync(agents, '[]');
   const repo = join(base, 'repo');
   mkdirSync(repo);
-  git(repo, 'init', '-q');
-  for (const [f, text] of Object.entries(FILES)) writeFileSync(join(repo, f), text);
-  git(repo, 'add', '.');
-  git(repo, 'commit', '-q', '-m', 'init');
-  writeFileSync(join(repo, '.env'), `API_TOKEN=${SECRET}\n`); // gitignored, never committed
-  writeFileSync(join(repo, 'notes.txt'), 'untracked before the run\n'); // part of the baseline
+  if (!o.empty) {
+    git(repo, 'init', '-q');
+    writeApp(repo);
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'init');
+    writeFileSync(join(repo, '.env'), `API_TOKEN=${SECRET}\n`); // gitignored, never committed
+    writeFileSync(join(repo, 'notes.txt'), 'untracked before the run\n'); // part of the baseline
+  }
   // The CLI and hooks see no global or system git config, so a commit needs the factory's fallback identity.
   // FACTORY_DASHBOARD_OFF: start and resume never spawn a dashboard server here.
   const env = { FACTORY_HOME: home, FACTORY_CLAUDE_PROJECTS: projects, FACTORY_CLAUDE_AGENTS_JSON: agents, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', FACTORY_DASHBOARD_OFF: '1' };
@@ -155,6 +165,10 @@ export const consumed = (w: World, pid: string): string | null => {
 // --- agent outputs -----------------------------------------------------------------------------
 
 const fm = (o: Record<string, unknown>): string => Object.entries(o).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n');
+
+// FRAME's output (5-2): the same context schema, origin greenfield, the UI kit as ui_reference.
+export const frameOut = (front = 'ui_surface: true\nui_reference: "shadcn/ui"\n'): string =>
+  `STATUS: DONE\n---\norigin: greenfield\n${front}---\n# Frame\nA node app: \`npm start\` on PORT, \`npm test\`, \`npm run health\`.\n`;
 
 export const reconOut = (): string => 'STATUS: DONE\n---\norigin: brownfield\nui_surface: true\n---\n# Map\nnode app: `npm start`, `npm test`, `npm run health`.\n';
 

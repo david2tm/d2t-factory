@@ -63,14 +63,34 @@ test('INTAKE: the open conversation blocks a second one; once reported with a va
   assert.deepEqual(due({ ...initialState(), run_id: 'r', phase: 'COMPLETED' }, IN), []);
 });
 
-test('ORIENT: one recon spawn unless the cache hit or one exists; greenfield waits for FRAME', () => {
+test('ORIENT: one recon spawn unless the cache hit or one exists; greenfield is one framer spawn at FRAME (5-2)', () => {
   const w = writer();
   w.put('intake_confirmed', { prompt_fact_id: 'f' }, { actor: 'human' });
   assert.deepEqual(due(w.s, OUT), [{ kind: 'spawn', stage: 'RECON', attempt: 1, role: 'recon', agent: 'd2t-factory:recon' }]);
   assert.deepEqual(due(w.s, { in_worktree: false, recon_cached: true }), []);
-  assert.deepEqual(due({ ...w.s, greenfield: true }, OUT), []);
+  const FRAMER = { kind: 'spawn', stage: 'FRAME', attempt: 1, role: 'framer', agent: 'd2t-factory:framer' };
+  assert.deepEqual(due({ ...w.s, greenfield: true }, OUT), [FRAMER]);
+  assert.deepEqual(due({ ...w.s, greenfield: true }, { in_worktree: false, recon_cached: true }), [FRAMER], 'FRAME is never cached');
   w.issue({ kind: 'spawn', stage: 'RECON', attempt: 1, role: 'recon', agent: 'd2t-factory:recon' });
   assert.deepEqual(due(w.s, OUT), []);
+});
+
+test('ORIENT, greenfield (5-2): an open framer blocks a second; a verified one rerun (voided) is due again with attempt + 1', () => {
+  const g = fold([{ v: 1, id: 'A', ts: 't', run: 'r', kind: 'run_started', actor: 'cli', corr: '', data: { task: 't', repo_hash: 'h', base_sha: 's', branch: 'b', greenfield: true } } as any]);
+  let s = g;
+  const put = (id: string, kind: string, data: object): void => {
+    const r = apply(s, { v: 1, id, ts: 't', run: 'r', kind, actor: 'cli', corr: '', session: 'S', data } as AnyEvent);
+    assert.ok(r.ok, `${kind}: ${r.reason}`);
+    s = r.state;
+  };
+  put('E1', 'intake_confirmed', { prompt_fact_id: 'f' });
+  put('F1', 'step_issued', { kind: 'spawn', stage: 'FRAME', attempt: 1, role: 'framer', agent: 'd2t-factory:framer' });
+  assert.deepEqual(due(s, OUT), []);
+  put('E2', 'step_claimed', { step_id: 'F1' });
+  put('E3', 'step_reported', { step_id: 'F1', output: { status: 'DONE' } });
+  put('E4', 'step_verified', { step_id: 'F1', evidence: [] });
+  assert.deepEqual(due(s, OUT), [], 'verified: the CLI completes FRAME');
+  assert.deepEqual(due({ ...s, voided: ['F1', 'E4'] }, OUT), [{ kind: 'spawn', stage: 'FRAME', attempt: 2, role: 'framer', agent: 'd2t-factory:framer' }]);
 });
 
 test('SCAFFOLD: enter_worktree from outside, then the scaffolder, then health and test once it reported a contract', () => {

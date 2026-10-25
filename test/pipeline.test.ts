@@ -14,8 +14,8 @@ import { projectRun } from '../src/core/projection.ts';
 import { fold } from '../src/core/reducer.ts';
 import { mayStop } from '../src/core/stop.ts';
 import {
-  agentStops, agentWrites, approveOut, builderOut, commands, consumed, contract, decide, designOut, fails, findingsOut, git, ok, questionBlock, reconOut, recordIntake, run, runDir, say,
-  scaffoldOut, SECRET, serveBoard, slicerOut, specOut, world, type World, type PlanSlice,
+  agentStops, agentWrites, approveOut, builderOut, commands, consumed, contract, decide, designOut, fails, findingsOut, frameOut, git, ok, questionBlock, reconOut, recordIntake, run, runDir, say,
+  scaffoldOut, SECRET, serveBoard, slicerOut, specOut, world, writeApp, type World, type PlanSlice,
 } from './harness.ts';
 
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
@@ -1136,21 +1136,24 @@ test('keep: the cut card is answered with nothing cut, the Backlog slices lose A
 
 // start → an intake that is not UI-free → RECON (`recon`: its context) → SCAFFOLD's checks passed,
 // with no dev server bound. The next `next` verifies the scaffolder and issues SPEC_DESIGN's steps.
+// With a greenfield context (5-2; the world must be empty) it is FRAME instead, and the scaffolder
+// writes the node app into the worktree first.
 function toSpecDesign(w: World, s: string, t: TestContext, recon = reconOut(), o: Record<string, unknown> = {}) {
+  const green = /^origin: greenfield$/m.test(recon);
   const r = started(w, s, undefined, { ui_free: false });
   t.after(() => { run(w, ['devserver', 'down', '--session', s]); });
-  const rc = r.c.take(byKind('spawn', 'recon'));
+  const rc = r.c.take(byKind('spawn', green ? 'framer' : 'recon'));
   assert.equal(ok(r.c.agent(rc, recon, 'ag-recon')).state, 'verified');
   const enter = r.c.take(byKind('enter_worktree'));
   r.c.cwd = enter.path;
   ok(r.c.done(enter.step_id));
   const port = portOf(w, r.id);
   const sc = r.c.take(byKind('spawn', 'scaffolder'));
-  ok(r.c.agent(sc, scaffoldOut(contract(port, { ...NO_SERVER, ...o })), 'ag-scaffold'));
+  if (green) writeApp(enter.path);
+  ok(r.c.agent(sc, scaffoldOut(contract(port, { ...NO_SERVER, ...(green ? { copy_gitignored: [] } : {}), ...o })), 'ag-scaffold'));
   assert.deepEqual(r.c.checks().map((x) => x.passed), [true, true]);
   return { ...r, wt: enter.path as string };
 }
-const inventRecon = (): string => reconOut().replace('origin: brownfield', 'origin: greenfield');
 
 test('acceptance (3-2): brownfield with a UI surface: one next issues the spec-writer and the designer; gate 1 waits for both, reads Spec + Design, and approve gate1 pins both', (t) => {
   const w = world();
@@ -1210,9 +1213,9 @@ test('acceptance (3-2): brownfield with a UI surface: one next issues the spec-w
 });
 
 test('acceptance (3-2): invent mode asks one question; /factory choose b (default a) voids the design, a second designer gets option b and the previous design, and a question in its output is rejected', (t) => {
-  const w = world();
+  const w = world({ empty: true }); // invent mode is reached only through FRAME (5-2)
   const s = 'sa';
-  const { id, c, wt } = toSpecDesign(w, s, t, inventRecon());
+  const { id, c, wt } = toSpecDesign(w, s, t, frameOut());
   const n = c.next();
   const [sw, ds] = n.steps;
   c.claim(sw.step_id);
@@ -1266,9 +1269,9 @@ test('acceptance (3-2): invent mode asks one question; /factory choose b (defaul
 });
 
 test('invent mode, /factory choose <default>: the card is verified, nothing is voided, the design stands and gate 1 follows', (t) => {
-  const w = world();
+  const w = world({ empty: true }); // invent mode is reached only through FRAME (5-2)
   const s = 'sa';
-  const { id, c, wt } = toSpecDesign(w, s, t, inventRecon());
+  const { id, c, wt } = toSpecDesign(w, s, t, frameOut());
   const [sw, ds] = c.next().steps;
   c.claim(sw.step_id);
   c.claim(ds.step_id);
@@ -1332,9 +1335,9 @@ test('the designer: a bad design or an inherit-mode question is MISSING_EVIDENCE
 });
 
 test('designer notes keep command order: /factory choose b, then rework gate1 <note>, and the rework note is the newest in the next designer brief', (t) => {
-  const w = world();
+  const w = world({ empty: true }); // invent mode is reached only through FRAME (5-2)
   const s = 'sa';
-  const { c, wt } = toSpecDesign(w, s, t, inventRecon());
+  const { c, wt } = toSpecDesign(w, s, t, frameOut());
   const [sw, ds] = c.next().steps;
   c.claim(sw.step_id);
   c.claim(ds.step_id);
@@ -1808,7 +1811,7 @@ test('rerun (3-4): refused while an agent step is open; at an escalation card in
   const { id, c, wt } = r;
   const b1 = c.take(byKind('spawn', 'builder'));
   fails(decide(w, s, 'rerun SLICE_PLAN', { cwd: wt }), 'ILLEGAL_TRANSITION', new RegExp(`only while parked at a card; step ${b1.step_id} \\(builder\\) is claimed`));
-  fails(decide(w, s, 'rerun FRAME', { cwd: wt }), 'ILLEGAL_TRANSITION', /5-2/);
+  fails(decide(w, s, 'rerun FRAME', { cwd: wt }), 'ILLEGAL_TRANSITION', /rerun FRAME: a brownfield run orients with RECON/);
   writeFileSync(join(wt, 'footer.js'), 'half\n');
   ok(c.agent(b1, 'STATUS: ESCALATE\nScope change: the footer needs a settings page first\n', 'ag-b1'));
   c.take(card('escalation'));
@@ -2245,5 +2248,287 @@ test('record --runs a,b (5-1): one session bound to both runs brings its transcr
   }
   assert.match(readFileSync(join(dir, 'transcripts', 'sa.jsonl'), 'utf8'), /first \[REDACTED\] then \[REDACTED\]/);
   for (const id of [a, b]) assert.match(readFileSync(join(dir, 'runs', repoHashOf(w, id), id, 'artifacts', 'steps', 'x', 'out.md'), 'utf8'), /saw \[REDACTED\]/);
+  ok(decide(w, 'sa', 'abandon'));
+});
+
+// --- 5-2: the greenfield path ----------------------------------------------------------------------
+
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+// A greenfield contract: no dev server bound, and nothing gitignored to copy from the empty directory.
+const GREEN_CONTRACT = { ...NO_SERVER, copy_gitignored: [] };
+const subjects = (dir: string, rev = 'HEAD'): string[] => git(dir, 'log', '--format=%s', rev).trim().split('\n');
+// A step as the schedule issued it: kind, then role, check or card type, then stage.
+const stepSig = (d: any): string => [d.kind, d.role ?? d.check ?? d.card?.type ?? '', d.stage].join(' ');
+
+// A whole run with a UI surface, played to run_completed: intake (not UI-free) → FRAME on an empty
+// world (RECON otherwise) → SCAFFOLD (greenfield: the scaffolder writes the node app first) → spec
+// and design → gate 1 → S1 [ui] → gate 2 → BUILD (one round, every reviewer approves) → WRAP →
+// merge → exit_worktree → housekeeping. Returns the steps issued from orientation's end on, and
+// every agent brief by role.
+function wholeRun(w: World, s: string, t: TestContext, green: boolean) {
+  say(w, s, 'add a todo app');
+  const id = ok(run(w, ['start', '--session', s])).run_id;
+  t.after(() => { run(w, ['devserver', 'down', '--session', s]); });
+  const c = conductor(w, s);
+  recordIntake((a) => ok(run(w, a)), s, { ui_free: false });
+  ok(decide(w, s, 'approve intake'));
+  const orient = c.take(byKind('spawn', green ? 'framer' : 'recon'));
+  const briefs: Record<string, string> = { [green ? 'framer' : 'recon']: readFileSync(orient.brief_path, 'utf8') };
+  assert.equal(ok(c.agent(orient, green ? frameOut() : reconOut(), 'ag-orient')).state, 'verified');
+  const enter = c.take(byKind('enter_worktree'));
+  c.cwd = enter.path;
+  ok(c.done(enter.step_id));
+  const wt = enter.path as string;
+  const sc = c.take(byKind('spawn', 'scaffolder'));
+  briefs.scaffolder = readFileSync(sc.brief_path, 'utf8');
+  if (green) writeApp(wt);
+  ok(c.agent(sc, scaffoldOut(contract(portOf(w, id), green ? GREEN_CONTRACT : NO_SERVER)), 'ag-scaffold'));
+  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  const [sw, ds] = c.next().steps;
+  c.claim(sw.step_id);
+  c.claim(ds.step_id);
+  briefs.designer = readFileSync(ds.brief_path, 'utf8');
+  ok(c.agent(sw, specOut('Todo app'), 'ag-spec'));
+  ok(c.agent(ds, designOut(green ? { mode: 'invent', assumptions: ['One list, no accounts'] } : {}), 'ag-design'));
+  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['spec.lint', true]]);
+  c.take(card('gate_1'));
+  ok(decide(w, s, 'approve gate1', { cwd: wt }));
+  c.plan([{ id: 'S1', title: 'Todo list', acs: ['AC-1', 'AC-2'], tags: ['ui'] }]);
+  c.take(card('gate_2'));
+  ok(decide(w, s, 'approve gate2', { cwd: wt }));
+  let end: any;
+  for (let i = 0; i < 30 && !end; i++) {
+    const n = c.next();
+    if (n.done) { end = n; break; }
+    assert.ok(n.steps.length, `nothing issued: ${JSON.stringify(n)}`);
+    for (const st of n.steps) {
+      c.claim(st.step_id);
+      const role = st.agent?.replace('d2t-factory:', '');
+      if (role) briefs[role] = readFileSync(st.brief_path, 'utf8');
+      if (st.kind === 'run_check') assert.equal(c.check(st.step_id).passed, true, st.check);
+      else if (role === 'builder') {
+        writeFileSync(join(wt, 'todo.js'), "module.exports = ['buy milk'];\n");
+        ok(c.agent(st, builderOut('Added the todo list'), 'ag-builder'));
+      } else if (role?.startsWith('reviewer-')) ok(c.agent(st, approveOut(), `ag-${role}`));
+      else if (st.kind === 'ask_human' && st.card.type === 'merge') assert.equal(ok(decide(w, s, 'merge', { cwd: wt })).phase, 'MERGED');
+      else if (st.kind === 'exit_worktree') { c.cwd = undefined; ok(c.done(st.step_id)); }
+      else assert.fail(`unexpected step ${JSON.stringify(st)}`);
+    }
+  }
+  assert.ok(end?.done, 'the run completed');
+  const cmds = commands(w, id);
+  const oriented = cmds.findIndex((e) => e.kind === 'stage_completed' && (e.data.stage === 'FRAME' || e.data.stage === 'RECON'));
+  const after = cmds.slice(oriented).filter((e) => e.kind === 'step_issued').map((e) => stepSig(e.data));
+  for (const e of cmds) assert.ok(validateEvent(e).ok, JSON.stringify(e));
+  assert.deepEqual(fold(cmds).rejected, []);
+  assert.equal(fold(cmds).phase, 'COMPLETED');
+  return { id, cmds, after, briefs, orient, sc, wt };
+}
+
+test('acceptance (5-2): an empty dir runs FRAME (UI kit shadcn/ui), a scaffolded node app, an invent design, gate 1, a UI slice, BUILD and the merge; every stage after FRAME issues what a brownfield run issues; main holds init, scaffold and the slice', (t) => {
+  const g = world({ empty: true });
+  const green = wholeRun(g, 'sg', t, true);
+  const b = world();
+  const brown = wholeRun(b, 'sb', t, false);
+  assert.deepEqual(green.after, brown.after);
+  assert.ok(green.after.includes('spawn reviewer-ui BUILD') && green.after.includes('spawn designer DESIGN'), green.after.join('\n'));
+
+  // start: git init and the empty commit `factory: init`, the run's base.
+  const rs = green.cmds[0];
+  assert.deepEqual([rs.data.greenfield, brown.cmds[0].data.greenfield], [true, undefined]);
+  const init = git(g.repo, 'rev-list', '--max-parents=0', 'HEAD').trim();
+  assert.equal(rs.data.base_sha, init);
+  assert.deepEqual([subjects(g.repo, init), git(g.repo, 'rev-parse', `${init}^{tree}`).trim()], [['factory: init'], EMPTY_TREE]);
+
+  // FRAME: its brief names the directory and the format; stage_completed embeds the framer output
+  // in `recon`; nothing goes to the recon cache.
+  const fb = green.briefs.framer;
+  assert.ok(fb.includes(`the directory the project goes in (main checkout; read only, change nothing): ${g.repo}`) && fb.includes('origin: greenfield') && fb.includes('shadcn/ui') && fb.includes(green.orient.output_path), fb);
+  assert.ok(!fb.includes('claimed port') && !fb.includes('worktree:') && !fb.includes('ESCALATE'), fb);
+  const fc = green.cmds.find((e) => e.kind === 'stage_completed' && e.data.stage === 'FRAME');
+  assert.deepEqual(fc.data.recon, { path: green.orient.output_path, sha256: sha(frameOut()), context: { origin: 'greenfield', ui_surface: true, ui_reference: 'shadcn/ui' } });
+  assert.equal(existsSync(join(g.home, repoHashOf(g, green.id), 'recon')), false, 'no recon cache');
+  assert.ok(existsSync(join(b.home, repoHashOf(b, brown.id), 'recon')), 'brownfield still caches');
+
+  // SCAFFOLD: the greenfield brief; the scaffold commit is the scaffolder's evidence.
+  assert.ok(green.briefs.scaffolder.includes('Create the project the frame describes') && green.briefs.scaffolder.includes(`project frame from FRAME: ${green.orient.output_path}`), green.briefs.scaffolder);
+  assert.ok(!green.briefs.scaffolder.includes('this is a brownfield repo') && brown.briefs.scaffolder.includes('this is a brownfield repo'));
+  const scaffold = git(g.repo, 'log', '--format=%H', '--grep', `^factory: scaffold (${green.sc.step_id})$`, 'HEAD').trim();
+  assert.match(scaffold, /^[0-9a-f]{40}$/);
+  assert.deepEqual(git(g.repo, 'show', '--format=', '--name-only', scaffold).trim().split('\n').sort(), ['.gitignore', 'health.js', 'package.json', 'server.js', 'test.js']);
+  const scv = green.cmds.find((e) => e.kind === 'step_verified' && e.data.step_id === green.sc.step_id);
+  assert.ok(scv.data.evidence.includes(`scaffold:${scaffold}`), JSON.stringify(scv.data.evidence));
+  assert.ok(!brown.cmds.find((e) => e.kind === 'step_verified' && e.data.step_id === brown.sc.step_id).data.evidence.some((x: string) => x.startsWith('scaffold:')));
+
+  // DESIGN in invent mode with the kit; reviewer-ui on the UI slice with the kit as a reference.
+  assert.ok(green.briefs.designer.includes('designer mode: invent') && green.briefs.designer.includes('- ui_reference: shadcn/ui\n') && green.briefs.designer.includes('project frame from FRAME'), green.briefs.designer);
+  assert.ok(brown.briefs.designer.includes('designer mode: inherit'));
+  assert.ok(green.briefs['reviewer-ui'].includes('UI kit chosen at FRAME (reference): shadcn/ui'), green.briefs['reviewer-ui']);
+  assert.ok(!brown.briefs['reviewer-ui'].includes('UI kit chosen at FRAME'));
+
+  // The merged main branch: factory: init, factory: scaffold, the slice commit, the merge.
+  const log = subjects(g.repo);
+  assert.equal(log.length, 4, log.join('\n'));
+  assert.deepEqual(log.filter((x) => x === 'factory: init' || x === `factory: scaffold (${green.sc.step_id})`).length, 2, log.join('\n'));
+  assert.ok(log.some((x) => /^factory: S1 Todo list \(/.test(x)) && log.some((x) => x.startsWith(`factory: merge factory/${green.id}`)), log.join('\n'));
+  assert.equal(git(g.repo, 'show', 'HEAD:todo.js'), "module.exports = ['buy milk'];\n");
+  assert.equal(existsSync(green.wt), false, 'the worktree is gone');
+});
+
+test('greenfield init (5-2): in a non-git dir decide answers a task and a bare /factory with none and a decision with NOT_FOUND, writing nothing; start makes .git and one empty commit `factory: init`; a framer naming brownfield is rejected and reissued', () => {
+  const w = world({ empty: true });
+  const p0 = say(w, 'sa', 'add a todo app');
+  const a = ok(run(w, ['decide', '--session', 'sa']));
+  assert.deepEqual([a.intent, a.task, a.resolution], ['start', 'add a todo app', { none: true }]);
+  assert.equal(consumed(w, p0), null);
+  const bare = (say(w, 'sa', ''), ok(run(w, ['decide', '--session', 'sa'])));
+  assert.deepEqual([bare.intent, bare.resolution], ['bare', { none: true }]);
+  const p1 = say(w, 'sa', 'approve gate1');
+  fails(run(w, ['decide', '--session', 'sa']), 'NOT_FOUND', /not inside a git repository/);
+  assert.equal(consumed(w, p1), 'no_run');
+  assert.deepEqual(readdirSync(w.repo), [], 'nothing written to the directory');
+
+  const { id, c } = started(w, 'sa', 'add a todo app', { ui_free: false });
+  assert.ok(statSync(join(w.repo, '.git')).isDirectory());
+  assert.deepEqual(subjects(w.repo), ['factory: init']);
+  assert.equal(git(w.repo, 'rev-parse', 'HEAD^{tree}').trim(), EMPTY_TREE);
+  assert.deepEqual([commands(w, id)[0].data.greenfield, commands(w, id)[0].data.base_sha], [true, headOf(w.repo)]);
+  assert.deepEqual(readdirSync(w.repo), ['.git'], 'project files are created only in the worktree');
+
+  // ORIENT: one framer spawn at FRAME; the board's stage is FRAME.
+  const n = c.next();
+  assert.deepEqual(n.steps.map((x: any) => [x.kind, x.stage, x.agent, x.attempt]), [['spawn', 'FRAME', 'd2t-factory:framer', 1]]);
+  assert.equal(ok(run(w, ['status', '--session', 'sa'])).stage, 'FRAME');
+  const f1 = n.steps[0];
+  c.claim(f1.step_id);
+  fails(c.agent(f1, frameOut().replace('origin: greenfield', 'origin: brownfield'), 'ag-f1'), 'MISSING_EVIDENCE', /origin must be greenfield in a framer output/);
+  const f2 = c.take(byKind('spawn', 'framer'));
+  assert.equal(f2.attempt, 2);
+  assert.match(readFileSync(f2.brief_path, 'utf8'), /Your previous output was rejected[\s\S]*origin must be greenfield/);
+  assert.equal(ok(c.agent(f2, frameOut(), 'ag-f2')).state, 'verified');
+  assert.deepEqual(c.next().steps.map((x: any) => x.kind), ['enter_worktree']);
+  assert.deepEqual(commands(w, id).filter((e) => e.kind === 'stage_completed').map((e) => e.data.stage), ['FRAME']);
+  for (const e of commands(w, id)) assert.ok(validateEvent(e).ok, JSON.stringify(e));
+  assert.deepEqual(stateOf(w, id).rejected, []);
+  ok(decide(w, 'sa', 'abandon'));
+});
+
+test('greenfield init (5-2): a repo with no commit gets `factory: init` from the empty tree; a staged file stays staged and uncommitted; the run is greenfield', () => {
+  const w = world({ empty: true });
+  git(w.repo, 'init', '-q');
+  writeFileSync(join(w.repo, 'staged.txt'), 'staged before the run\n');
+  git(w.repo, 'add', 'staged.txt');
+  say(w, 'sa', 'add a todo app');
+  const id = ok(run(w, ['start', '--session', 'sa'])).run_id;
+  assert.deepEqual(subjects(w.repo), ['factory: init']);
+  assert.equal(git(w.repo, 'rev-parse', 'HEAD^{tree}').trim(), EMPTY_TREE);
+  assert.equal(git(w.repo, 'diff', '--cached', '--name-only').trim(), 'staged.txt');
+  assert.equal(git(w.repo, 'ls-tree', '-r', '--name-only', 'HEAD').trim(), '');
+  assert.equal(commands(w, id)[0].data.greenfield, true);
+  ok(decide(w, 'sa', 'abandon'));
+});
+
+test('greenfield SCAFFOLD (5-2): a scaffolder that created no project files gets the scaffold_failure card with retry and abandon only; the retry scaffolds the app and the CLI commits it as the scaffold', (t) => {
+  const w = world({ empty: true });
+  const s = 'sa';
+  const { id, c } = started(w, s);
+  t.after(() => { run(w, ['devserver', 'down', '--session', s]); });
+  ok(c.agent(c.take(byKind('spawn', 'framer')), frameOut('ui_surface: false\n'), 'ag-frame'));
+  const enter = c.take(byKind('enter_worktree'));
+  c.cwd = enter.path;
+  ok(c.done(enter.step_id));
+  const wt = enter.path as string;
+  const sc1 = c.take(byKind('spawn', 'scaffolder'));
+  // Only the contract: no project in the worktree (its checks are `true`, so they pass).
+  ok(c.agent(sc1, scaffoldOut(contract(portOf(w, id), { ...GREEN_CONTRACT, test: 'true' })), 'ag-sc1'));
+  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  const fail = c.take(card('scaffold_failure'));
+  assert.equal(fail.card.reason, 'the scaffolder created no project files');
+  assert.deepEqual(fail.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon']);
+  fails(decide(w, s, 'rule E1 accept', { cwd: wt }), 'ILLEGAL_TRANSITION', /the choices are retry <note…>$/);
+  assert.deepEqual(subjects(wt), ['factory: init'], 'nothing committed');
+  const rr = ok(decide(w, s, 'rule E1 retry create the node app', { cwd: wt }));
+  const sc1b = c.take(byKind('spawn', 'scaffolder'));
+  assert.deepEqual([sc1b.step_id, sc1b.attempt], [rr.reissued, 2]);
+  assert.match(readFileSync(sc1b.brief_path, 'utf8'), /E1 retry: create the node app/);
+  // A project whose test fails: still no accept on a greenfield run (it would leave no scaffold commit).
+  writeApp(wt);
+  ok(c.agent(sc1b, scaffoldOut(contract(portOf(w, id), { ...GREEN_CONTRACT, test: 'false' })), 'ag-sc1b'));
+  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', false]]);
+  const fail2 = c.take(card('scaffold_failure'));
+  assert.equal(fail2.card.reason, 'contract.test failed (exit 1)');
+  assert.deepEqual(fail2.card.commands, ['/factory rule E2 retry <note…>', '/factory abandon']);
+  fails(decide(w, s, 'rule E2 accept', { cwd: wt }), 'ILLEGAL_TRANSITION', /the choices are retry <note…>$/);
+  assert.deepEqual(subjects(wt), ['factory: init'], 'still nothing committed');
+  ok(decide(w, s, 'rule E2 retry make the test pass', { cwd: wt }));
+  const sc2 = c.take(byKind('spawn', 'scaffolder'));
+  assert.equal(sc2.attempt, 3);
+  ok(c.agent(sc2, scaffoldOut(contract(portOf(w, id), GREEN_CONTRACT)), 'ag-sc2'));
+  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
+  assert.deepEqual(c.next().steps.map((x: any) => x.agent), ['d2t-factory:spec-writer']);
+  assert.deepEqual(subjects(wt), [`factory: scaffold (${sc2.step_id})`, 'factory: init']);
+  assert.equal(git(wt, 'status', '--porcelain').trim(), '', 'the worktree is clean');
+  const v = last(w, id, 'step_verified');
+  assert.equal(stateOf(w, id).steps[sc2.step_id].state, 'verified');
+  assert.ok(commands(w, id).some((e) => e.kind === 'step_verified' && e.data.step_id === sc2.step_id && e.data.evidence.includes(`scaffold:${headOf(wt)}`)), JSON.stringify(v));
+  for (const e of commands(w, id)) assert.ok(validateEvent(e).ok, JSON.stringify(e));
+  assert.deepEqual(stateOf(w, id).rejected, []);
+  ok(decide(w, s, 'abandon', { cwd: wt }));
+});
+
+test('rerun FRAME (5-2) at gate 1: a fresh framer (attempt 2), SCAFFOLD kept over the verified scaffolder, a fresh spec-writer and designer; rerun RECON is refused on a greenfield run', (t) => {
+  const w = world({ empty: true });
+  const s = 'sa';
+  const { id, c, wt } = toSpecDesign(w, s, t, frameOut());
+  const [sw, ds] = c.next().steps;
+  c.claim(sw.step_id);
+  c.claim(ds.step_id);
+  ok(c.agent(sw, specOut('Todo app'), 'ag-spec'));
+  ok(c.agent(ds, designOut({ mode: 'invent' }), 'ag-design'));
+  c.checks();
+  c.take(card('gate_1'));
+  fails(decide(w, s, 'rerun RECON', { cwd: wt }), 'ILLEGAL_TRANSITION', /rerun RECON: a greenfield run orients with FRAME/);
+  const rr = ok(decide(w, s, 'rerun FRAME', { cwd: wt }));
+  assert.deepEqual([rr.phase, rr.stage], ['ORIENT', 'FRAME']);
+  const f2 = c.take(byKind('spawn', 'framer'));
+  assert.equal(f2.attempt, 2);
+  // FRAME still runs in the main checkout: no port, no worktree, no frame of its own as input.
+  const fb = readFileSync(f2.brief_path, 'utf8');
+  for (const line of ['claimed port:', 'worktree:', 'the worktree (product code)', 'project frame from FRAME:']) assert.ok(!fb.includes(line), `${line} in\n${fb}`);
+  const fresh = frameOut('ui_surface: true\nui_reference: "Radix Themes"\n');
+  ok(c.agent(f2, fresh, 'ag-frame-2'));
+  const n = c.next();
+  assert.deepEqual(n.steps.map((x: any) => [x.agent, x.attempt]), [['d2t-factory:spec-writer', 2], ['d2t-factory:designer', 2]]);
+  assert.ok(readFileSync(n.steps[1].brief_path, 'utf8').includes('- ui_reference: Radix Themes\n'));
+  assert.deepEqual(commands(w, id).filter((e) => e.kind === 'stage_completed').map((e) => e.data.stage), ['FRAME', 'FRAME', 'SCAFFOLD']);
+  assert.equal(stateOf(w, id).recon!.sha256, sha(fresh));
+  assert.equal(commands(w, id).filter((e) => e.kind === 'step_issued' && e.data.role === 'scaffolder').length, 1, 'no second scaffolder');
+  assert.equal(subjects(wt).filter((x) => x.startsWith('factory: scaffold')).length, 1, 'one scaffold commit');
+  for (const e of commands(w, id)) assert.ok(validateEvent(e).ok, JSON.stringify(e));
+  assert.deepEqual(stateOf(w, id).rejected, []);
+  ok(decide(w, s, 'abandon', { cwd: wt }));
+});
+
+test('greenfield init (5-2): a non-git dir holding anything is refused with BAD_ARGS naming it; no .git, no run, the prompt unconsumed', () => {
+  const w = world({ empty: true });
+  writeFileSync(join(w.repo, 'notes.md'), 'my notes\n');
+  const pid = say(w, 'sa', 'add a todo app');
+  const err = fails(run(w, ['start', '--session', 'sa']), 'BAD_ARGS', /is not a git repository and is not empty/);
+  assert.ok(err.error.message.includes(w.repo), err.error.message);
+  assert.deepEqual(readdirSync(w.repo), ['notes.md'], 'no .git created');
+  assert.equal(consumed(w, pid), null);
+  assert.equal(existsSync(join(w.home, 'sessions', 'sa.json')), false, 'nothing claimed or bound');
+});
+
+test('greenfield init (5-2): a repo whose only commit is empty gets no `factory: init`; the run is greenfield on the existing HEAD', () => {
+  const w = world({ empty: true });
+  git(w.repo, 'init', '-q');
+  git(w.repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+  const before = headOf(w.repo);
+  say(w, 'sa', 'add a todo app');
+  const id = ok(run(w, ['start', '--session', 'sa'])).run_id;
+  assert.deepEqual(subjects(w.repo), ['init']);
+  const rs = commands(w, id)[0];
+  assert.deepEqual([rs.data.greenfield, rs.data.base_sha], [true, before]);
   ok(decide(w, 'sa', 'abandon'));
 });

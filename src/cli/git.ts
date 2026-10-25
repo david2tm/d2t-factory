@@ -71,6 +71,30 @@ export function worktreeAdd(root: string, path: string, branch: string, base: st
   gitOrThrow(root, exists ? ['worktree', 'add', path, branch] : ['worktree', 'add', path, '-b', branch, base]);
 }
 
+// --- greenfield (AD-9, 5-2) ------------------------------------------------------------------
+
+// The empty tree's id in this repo's hash format.
+export const emptyTree = (cwd: string): string => gitOrThrow(cwd, ['hash-object', '-t', 'tree', '/dev/null']).trim();
+
+export const insideRepo = (cwd: string): boolean => git(cwd, ['rev-parse', '--git-dir']) !== null;
+
+// AD-9: a non-git cwd gets `git init`; a repo with no commit gets the empty commit `factory: init`,
+// built from the empty tree (never the index, so anything staged stays staged and uncommitted) and
+// set as HEAD's branch. A repo with a commit is left alone.
+export function initGreenfield(cwd: string): void {
+  if (!insideRepo(cwd)) gitOrThrow(cwd, ['init', '-q']);
+  if (git(cwd, ['rev-parse', '--verify', '-q', 'HEAD^{commit}'])) return;
+  const tree = gitOrThrow(cwd, ['hash-object', '-w', '-t', 'tree', '/dev/null']).trim();
+  const sha = gitOrThrow(cwd, [...identity(cwd), 'commit-tree', tree, '-m', 'factory: init']).trim();
+  gitOrThrow(cwd, ['update-ref', '-m', 'factory: init', 'HEAD', sha]);
+}
+
+// HEAD's tree is the empty tree: a greenfield run (5-2).
+export const headTreeEmpty = (cwd: string): boolean => git(cwd, ['rev-parse', '--verify', '-q', 'HEAD^{tree}']) === emptyTree(cwd);
+
+// Any change in a checkout, untracked files included (ignored files don't count).
+export const dirty = (cwd: string): boolean => gitOrThrow(cwd, ['status', '--porcelain', '--untracked-files=all']).trim() !== '';
+
 // --- the build loop, WRAP and merge (AD-8, AD-30) --------------------------------------------
 
 // A commit needs an identity; a repo without one gets the factory's, never the user's config changed.

@@ -1,7 +1,7 @@
 // Shared by next, done, decide and check: reading a step's out.md, the projection a report embeds
 // (AD-23), the events a report implies (AD-7, AD-11), reissues (AD-24) and the SCAFFOLD copy.
 import { readFileSync } from 'node:fs';
-import { checkOutput, type AgentOutput, type OutputOpts } from '../core/artifacts.ts';
+import { checkOutput, originOf, type AgentOutput, type OutputOpts } from '../core/artifacts.ts';
 import { escalationCard, scaffoldFailureCard, stepNonConvergenceCard } from '../core/cards.ts';
 import { MAX_STEP_ATTEMPTS } from '../core/config.ts';
 import type { AnyEvent, Card, Envelope } from '../core/events.ts';
@@ -23,9 +23,11 @@ export interface ReadOutput { path: string; real: string; text: string | null; s
 
 export const isAgent = (st: Step): boolean => st.kind === 'spawn' || st.kind === 'resume';
 
-// What the role's output is checked against beyond its text: the claimed port, and for the designer
-// (3-2) the mode its context implies and whether the run's one question was already answered.
+// What the role's output is checked against beyond its text: the claimed port, for the designer
+// (3-2) the mode its context implies and whether the run's one question was already answered, and
+// for recon and framer (5-2) the run's origin.
 export function outputOpts(state: RunState, role: string | undefined): OutputOpts {
+  if (originOf(role)) return { port: state.port, origin: state.greenfield ? 'greenfield' : 'brownfield' };
   if (role !== 'designer') return { port: state.port };
   return { port: state.port, mode: designMode(state), no_question: designQuestionAnswered(state) };
 }

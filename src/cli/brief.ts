@@ -20,6 +20,9 @@ export interface BriefExtra { notes?: readonly string[]; error?: string }
 // `Scaffold failed` is the scaffolder's declared ask alone (3-4); every other role escalates with a
 // closed-list condition.
 const labelsFor = (role: string): string => ESCALATION_LABELS.filter((l) => role === 'scaffolder' || l !== 'Scaffold failed').join(', ');
+// FRAME's UI kit when the task names none (AD-27, 5-2): shadcn-class.
+export const DEFAULT_UI_KIT = 'shadcn/ui';
+
 const ESCALATE = (label: string, role: string): string => `Or, when you cannot do the job, line 1 \`STATUS: ESCALATE\` and line 2 \`${label}: <one line why>\` (labels: ${labelsFor(role)}).`;
 
 const FORMAT: Record<string, string> = {
@@ -29,11 +32,25 @@ const FORMAT: Record<string, string> = {
     '`ui_reference` is optional. After the closing `---`, a short markdown map of the repo: stack, how to install, start and test it, layout, conventions.',
     ESCALATE('Scope change', 'recon'),
   ].join('\n'),
+  framer: [
+    'Line 1 `STATUS: DONE`, then this front matter (one `key: value` per line; JSON for lists and quoted strings):',
+    '```', 'STATUS: DONE', '---', 'origin: greenfield', 'ui_surface: true', `ui_reference: "${DEFAULT_UI_KIT}"`, '---', '```',
+    `\`origin\` is always greenfield. \`ui_surface\` is true when the task has a page or component a user sees; then \`ui_reference\` names the UI kit the project will use: ${DEFAULT_UI_KIT} unless the task calls for another. Leave \`ui_reference\` out without a UI surface. After the closing \`---\`, a short markdown frame of the project to create: the stack, how to install, start and test it, and the layout.`,
+    'Ask the human nothing, and never escalate: choose what the task leaves open yourself, and say what you chose in the frame.',
+  ].join('\n'),
   scaffolder: [
     'Line 1 `STATUS: DONE`, then the run contract as front matter (JSON for lists and for strings with spaces):',
     '```', 'STATUS: DONE', '---', 'install: "npm ci"', 'add: "npm install --save-exact"', 'start: "npm run dev"', 'url: "http://localhost:<port>"',
     'port: <port>', 'test: "npm test"', 'health: "curl -fsS http://localhost:<port>/"', 'copy_gitignored: [".env"]', 'services: [{"name": "postgres", "shared": true}]', '---', '```',
     '`port` must be exactly the claimed port above, and `start` must read it from the PORT environment variable. `health` is a command (or an http URL) that succeeds once the app serves. `copy_gitignored` lists the gitignored files (like `.env`) the app needs; the CLI copies them. Install nothing and change no tracked file: this is a brownfield repo.',
+    ESCALATE('Scaffold failed', 'scaffolder'),
+  ].join('\n'),
+  // SCAFFOLD on a greenfield run (5-2): the same contract, over a project the scaffolder creates.
+  'scaffolder:greenfield': [
+    'Create the project the frame describes in the worktree, then write line 1 `STATUS: DONE` and its run contract as front matter (JSON for lists and for strings with spaces):',
+    '```', 'STATUS: DONE', '---', 'install: "npm install"', 'add: "npm install --save-exact"', 'start: "npm run dev"', 'url: "http://localhost:<port>"',
+    'port: <port>', 'test: "npm test"', 'health: "curl -fsS http://localhost:<port>/"', 'copy_gitignored: []', 'services: []', '---', '```',
+    'The project has its own test runner with at least one passing test (`test` runs it), and `start` serves the app on the port from the PORT environment variable; `port` must be exactly the claimed port above. Add a `.gitignore` for dependencies and build output. Install dependencies only with the contract\'s own `install` (and `add` for one more). `health` is a command (or an http URL) that succeeds once the app serves. `copy_gitignored` is `[]` (the directory had nothing to copy). Never commit: the factory commits the project as the scaffold once its checks pass.',
     ESCALATE('Scaffold failed', 'scaffolder'),
   ].join('\n'),
   'spec-writer': [
@@ -167,18 +184,22 @@ function previousRound(state: RunState, slice: string): { note: string; inputs: 
 // Notes typed with every `/factory rework gate2 <note…>`, for the slicer (3-3).
 const slicerNotes = (commands: readonly AnyEvent[]): string[] => reworkNotes(commands, 'gate2');
 
+// The orientation agents (RECON, FRAME) run in the main checkout, before the worktree and the port.
+const orienting = (role: string): boolean => role === 'recon' || role === 'framer';
+
 function inputs(state: RunState, step: BriefStep, root: string): [string, string][] {
   const out: [string, string][] = [];
-  const context = state.recon?.path ?? latestByRole(state, 'recon')?.output_path;
+  const context = state.recon?.path ?? latestByRole(state, state.greenfield ? 'framer' : 'recon')?.output_path;
   const contract = latestStep(state, (st) => st.role === 'scaffolder' && st.output?.status === 'DONE');
   const spec = latestSpec(state);
   if (step.role === 'recon') out.push(['the repo (main checkout; read only, change nothing)', root]);
-  if (step.role !== 'recon' && context) out.push(['repo context from RECON', context]);
+  if (step.role === 'framer') out.push(['the directory the project goes in (main checkout; read only, change nothing)', root]);
+  if (!orienting(step.role) && context) out.push([state.greenfield ? 'project frame from FRAME' : 'repo context from RECON', context]);
   if ((SLICE_ROLES.includes(step.role) || step.role === 'slicer') && spec?.output_path) out.push(['the approved spec (pinned at gate 1)', spec.output_path]);
   const design = step.role === 'builder' || step.role === 'slicer' || step.role === 'reviewer-ui' ? latestDesign(state) : undefined;
   if (design?.output_path) out.push(['the approved design (pinned at gate 1)', design.output_path]);
   if ((step.role === 'spec-writer' || step.role === 'builder' || isAppReviewer(step.role)) && contract?.output_path) out.push(['run contract from SCAFFOLD', contract.output_path]);
-  if (step.role !== 'recon' && state.worktree) out.push(['the worktree (product code)', state.worktree]);
+  if (!orienting(step.role) && state.worktree) out.push(['the worktree (product code)', state.worktree]);
   if (step.role === 'builder' && step.slice) {
     for (const input of previousRound(state, step.slice)?.inputs ?? []) if (input[1]) out.push(input);
   }
@@ -200,8 +221,8 @@ function inputs(state: RunState, step: BriefStep, root: string): [string, string
 // Only the human's notes and the error text are redacted: paths, ports and the format must stay exact.
 export function briefText(state: RunState, commands: readonly AnyEvent[], step: BriefStep, root: string, extra: BriefExtra = {}, values: readonly string[] = []): string {
   const facts: string[] = [`task: ${state.task}`, `run: ${state.run_id} (branch ${state.branch}, base ${state.base_sha})`];
-  if (state.port !== undefined && step.role !== 'recon') facts.push(`claimed port: ${state.port}`);
-  if (state.worktree && step.role !== 'recon') facts.push(`worktree: ${state.worktree}`);
+  if (state.port !== undefined && !orienting(step.role)) facts.push(`claimed port: ${state.port}`);
+  if (state.worktree && !orienting(step.role)) facts.push(`worktree: ${state.worktree}`);
   const sl = step.slice ? state.slices[step.slice] : undefined;
   if (sl) {
     facts.push(`slice: ${sl.id} ${sl.title ?? ''}`.trim(), `acceptance criteria of ${sl.id}: ${(sl.acs ?? []).join(', ') || 'none'}`);
@@ -238,6 +259,9 @@ export function briefText(state: RunState, commands: readonly AnyEvent[], step: 
   if (step.role === 'reviewer-ui') {
     const ref = uiReference(state);
     if (ref) facts.push(`reference to compare the running app against: ${ref}`);
+    // Greenfield (5-2): the UI kit FRAME chose is a reference too, beside the invented design.
+    const kit = state.recon?.context?.ui_reference;
+    if (state.greenfield && typeof kit === 'string' && kit && kit !== ref) facts.push(`UI kit chosen at FRAME (reference): ${kit}`);
   }
   if (step.role === 'reviewer-ux' && sl) {
     const ref = uiReference(state);
@@ -259,7 +283,7 @@ export function briefText(state: RunState, commands: readonly AnyEvent[], step: 
     '', '## Facts', ...facts.map((f) => `- ${f}`),
     '', '## Read only these inputs', ...inputs(state, step, root).map(([label, p]) => `- ${label}: ${p}`),
     '', '## Write exactly one file', `${step.output_path}`, 'Write it with the Write tool. Write nothing else under ~/.factory, and never run `factory`.',
-    '', '## Output format', FORMAT[step.role] ?? 'Line 1 `STATUS: DONE|ESCALATE`.',
+    '', '## Output format', FORMAT[step.role === 'scaffolder' && state.greenfield ? 'scaffolder:greenfield' : step.role] ?? 'Line 1 `STATUS: DONE|ESCALATE`.',
   ];
   if (prev) parts.push('', `## Your last round on ${sl!.id} did not pass`, quote(redactString(prev.note, values)));
   if (notes.length) parts.push('', '## Notes from the human (newest last)', ...notes.map(quote));

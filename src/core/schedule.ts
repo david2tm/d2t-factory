@@ -33,7 +33,7 @@ export function mergeCardCurrent(s: RunState, card: Step, p: WrapProbe): boolean
 
 export interface ScheduleCtx {
   in_worktree: boolean; // the caller's realpath cwd is inside the run's worktree
-  recon_cached: boolean; // <repo-hash>/recon/<base_sha>.md exists and parses
+  recon_cached: boolean; // brownfield: <repo-hash>/recon/<base_sha>.md exists and parses
   // 3-4: per slice, the builder agent a new round of it may resume (spawned under the current session_bound).
   resume_agents?: Record<string, string>;
   wrap?: WrapProbe;
@@ -62,12 +62,15 @@ function intake(s: RunState): DueStep[] {
   return v.ok ? [{ kind: 'ask_human', stage: 'INTAKE', attempt: 1, card: intakeConfirmCard(v.value) }] : [];
 }
 
-// RECON (brownfield ORIENT): one recon agent unless the cache hit; the CLI completes the stage.
+// ORIENT: RECON (brownfield) is one recon agent unless the cache hit; FRAME (greenfield, 5-2) is one
+// framer agent, never cached. A rerun voids the verified one, so a fresh one is due with attempt + 1.
+// The CLI completes the stage.
 function orient(s: RunState, ctx: ScheduleCtx): DueStep[] {
-  if (s.greenfield || ctx.recon_cached) return []; // FRAME arrives in 5-x
-  const r = latestByRole(s, 'recon');
-  if (!r) return [agent('recon', 'RECON', 1)];
-  if (r.state === 'verified' && isVoided(s, r.id)) return [agent('recon', 'RECON', r.attempt + 1)];
+  const [role, stage] = s.greenfield ? ['framer', 'FRAME'] as const : ['recon', 'RECON'] as const;
+  if (!s.greenfield && ctx.recon_cached) return [];
+  const r = latestByRole(s, role);
+  if (!r) return [agent(role, stage, 1)];
+  if (r.state === 'verified' && isVoided(s, r.id)) return [agent(role, stage, r.attempt + 1)];
   return [];
 }
 

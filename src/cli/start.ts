@@ -1,7 +1,8 @@
-// `factory start [task]` (AD-9, AD-25, AD-26): consumes the human's task prompt and starts a run.
+// `factory start [task]` (AD-9, AD-25, AD-26): consumes the human's task prompt and starts a run,
+// in an empty or non-git directory as a greenfield run (5-2).
 // While a live run holds the repo's exclusive claim (AD-15) it refuses with REFUSED_EXCLUSIVE before
 // anything is claimed: no run dir, no lane, and the prompt stays unconsumed.
-import { rmSync } from 'node:fs';
+import { readdirSync, rmSync } from 'node:fs';
 import { FactoryError } from '../core/errors.ts';
 import { runId as newRunId } from '../store/ids.ts';
 import { loadRun } from '../store/load-run.ts';
@@ -12,7 +13,7 @@ import type { Args } from './args.ts';
 import { exclusiveHolder, refusedExclusive } from './claims.ts';
 import { appendAll, gateOrThrow, makeEvent, requireSetup } from './commit.ts';
 import { ensureDashboard } from './dashboard.ts';
-import { headSha, repoHash, repoRoot, statusDigest } from './git.ts';
+import { headSha, headTreeEmpty, initGreenfield, insideRepo, repoHash, repoRoot, statusDigest } from './git.ts';
 import { consumeWith, describe, embed, newestPrompt, supersede } from './prompt.ts';
 import { refuseOtherBinding, requireSession } from './resolve.ts';
 
@@ -20,8 +21,6 @@ export async function start(args: Args): Promise<unknown> {
   const session = requireSession(args);
   requireSetup();
   const cwd = process.cwd();
-  const hash = repoHash(cwd);
-  const base = headSha(cwd);
   const p = newestPrompt(session);
   const given = args.positionals.join(' ').trim();
   let task: string;
@@ -34,6 +33,17 @@ export async function start(args: Args): Promise<unknown> {
   } else {
     throw new FactoryError('BAD_ARGS', `the newest prompt is ${describe(p.parsed)}, not a task`);
   }
+
+  // AD-9 (5-2): an empty non-git cwd is initialised, and a repo with no commit gets `factory: init`,
+  // before anything is claimed. A run is greenfield iff HEAD's tree is empty then. A non-git cwd that
+  // holds anything is refused: greenfield starts only in an empty directory.
+  if (!insideRepo(cwd) && readdirSync(cwd).length) {
+    throw new FactoryError('BAD_ARGS', `${cwd} is not a git repository and is not empty: start a greenfield run in an empty directory, or run git init there first`);
+  }
+  initGreenfield(cwd);
+  const hash = repoHash(cwd);
+  const base = headSha(cwd);
+  const greenfield = headTreeEmpty(cwd);
 
   refuseOtherBinding(session, hash);
   const holder = exclusiveHolder(hash);
@@ -53,7 +63,7 @@ export async function start(args: Args): Promise<unknown> {
   try {
     await withLock(lockDir(hash, id), () => {
       const { state } = loadRun(hash, id);
-      const started = makeEvent(id, 'run_started', { task, repo_hash: hash, base_sha: base, branch: `factory/${id}`, ...embed(p) }, { session, corr: p.human.id });
+      const started = makeEvent(id, 'run_started', { task, repo_hash: hash, base_sha: base, branch: `factory/${id}`, ...(greenfield ? { greenfield } : {}), ...embed(p) }, { session, corr: p.human.id });
       const bound = makeEvent(id, 'session_bound', { session }, { session, corr: started.id });
       const baseline = makeEvent(id, 'check_ran', {
         check: 'git.baseline', exit_code: 0, duration_ms: probeMs, basis_seq: 2, sha: base, digest: status.digest, command: status.command,
