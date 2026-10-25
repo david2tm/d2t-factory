@@ -17,6 +17,8 @@ export const pluginEnvFile = (): string => join(factoryHome(), 'plugin-env.json'
 export const hookErrorsLog = (): string => join(factoryHome(), 'hook-errors.log');
 export const sessionsDir = (): string => join(factoryHome(), 'sessions');
 export const sessionFile = (session: string): string => join(sessionsDir(), `${session}.json`);
+// The Stop hook's consecutive-block counter for a session (6-1, AD-12).
+export const stopFile = (session: string): string => join(sessionsDir(), `${session}.stop`);
 export const inboxDir = (): string => join(factoryHome(), 'inbox');
 export const inboxFile = (session: string): string => join(inboxDir(), `${session}.jsonl`);
 export const consumedDir = (promptId: string): string => join(inboxDir(), 'consumed', promptId);

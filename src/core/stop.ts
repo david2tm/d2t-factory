@@ -34,3 +34,51 @@ export function mayStop(state: RunState, background_tasks: unknown): StopVerdict
   }
   return { may: true, reason: 'every open step awaits the human or runs in the background' };
 }
+
+// --- transcript readers (6-1) ----------------------------------------------------------------
+// Over the parsed lines of the session's own transcript, located the AD-6 way by the caller. They
+// match Claude Code's structured records only, never message text.
+
+type Entry = Record<string, unknown>;
+const entry = (x: unknown): x is Entry => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
+
+// A turn the human started: a user entry with turnOrigin human. Stop-hook feedback is isMeta.
+const isHumanTurn = (x: unknown): x is Entry => entry(x) && x.type === 'user' && x.turnOrigin === 'human' && x.isMeta !== true;
+
+function lastHumanIndex(lines: readonly unknown[]): number {
+  for (let i = lines.length - 1; i >= 0; i--) if (isHumanTurn(lines[i])) return i;
+  return -1;
+}
+
+// The uuid of the turn's last human prompt, or null.
+export function lastHumanTurn(lines: readonly unknown[]): string | null {
+  const i = lastHumanIndex(lines);
+  const uuid = i >= 0 ? (lines[i] as Entry).uuid : undefined;
+  return typeof uuid === 'string' ? uuid : null;
+}
+
+// A main-thread assistant entry of this session that calls a tool.
+const isToolUse = (x: unknown, session: string): boolean =>
+  entry(x) && x.type === 'assistant' && x.isSidechain !== true && x.sessionId === session && entry(x.message) && Array.isArray(x.message.content)
+  && x.message.content.some((b) => entry(b) && b.type === 'tool_use');
+
+// The tool_use_id of the newest tool use the human rejected after the last human prompt, in this
+// session's main thread, with no main-thread tool use after it, or null. Once the conductor calls a
+// tool again the rejection is spent. Hook (guard) and deny-rule denials are `permission-rule`
+// records and never match.
+export function humanRejection(lines: readonly unknown[], session: string): string | null {
+  const from = lastHumanIndex(lines);
+  for (let i = lines.length - 1; i > from; i--) {
+    const x = lines[i];
+    if (isToolUse(x, session)) return null;
+    if (!entry(x) || x.type !== 'user' || x.isSidechain === true || x.sessionId !== session) continue;
+    if (x.toolDenialKind !== 'user-rejected') continue;
+    const d = x.permissionDecision;
+    if (!entry(d) || d.decision !== 'reject' || d.source !== 'user_reject') continue;
+    const content = entry(x.message) ? x.message.content : undefined;
+    if (!Array.isArray(content)) continue;
+    const block = content.find((b): b is Entry => entry(b) && b.type === 'tool_result' && b.is_error === true && typeof b.tool_use_id === 'string');
+    if (block) return block.tool_use_id as string;
+  }
+  return null;
+}

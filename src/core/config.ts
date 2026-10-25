@@ -14,6 +14,8 @@ export const LOCK_WAIT_MS = 10_000;
 // held for this long after its mtime; older, its creator died there and it is stale (AD-29).
 export const CLAIM_GRACE_MS = 5_000;
 export const SPEC_MAX_LINES = 40;
+// 6-1: consecutive Stop blocks for the holder before the next stop is let through (stop_forced).
+export const STOP_BLOCK_MAX = 3;
 // `factory check`: the longest a test check may run, and how long health is polled before it fails.
 export const CHECK_TIMEOUT_MS = 10 * 60_000;
 export const HEALTH_TIMEOUT_MS = 60_000;

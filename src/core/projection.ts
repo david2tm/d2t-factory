@@ -4,7 +4,7 @@
 import { budgetOf, openCutAsk, timeboxView } from './budget.ts';
 import { HEARTBEAT_INTERVAL_MS, SIGNAL_LOST_MISSED } from './config.ts';
 import type { AnyEvent, Card, Stage } from './events.ts';
-import { isDecisionKind } from './events.ts';
+import { isDecisionKind, TOOL_FACT_KINDS } from './events.ts';
 import { boardStage, fold, isTerminal, openSteps, type RunState, type SliceState, type Step } from './reducer.ts';
 import { claimOverlay, isParked, isVoided } from './verify.ts';
 
@@ -86,8 +86,14 @@ export interface Lane {
   cards: BoardCard[];
   needs_you: NeedsYou[];
   decisions: Decision[];
+  // 6-1: the Stop hook let the conductor's turn end through a recorded exit (stop_yielded: the human
+  // rejected a tool call; stop_forced: the block cap), and nothing has happened in the run since.
+  // Absent otherwise, so runs without stop facts project as before.
+  paused?: Paused;
   live?: { signal_lost: boolean };
 }
+
+export interface Paused { reason: 'human_rejected' | 'block_cap'; at: string; blocks?: number }
 
 export interface Board { runs: Lane[] }
 
@@ -300,6 +306,7 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
   const phaseAt = (p: RunState['phase']): number => ['INTAKE', 'ORIENT', 'SCAFFOLD', 'SPEC_DESIGN', 'SLICE_PLAN', 'BUILD', 'WRAP', 'MERGED', 'COMPLETED'].indexOf(p);
   const reached = phaseAt(s.phase === 'ABANDONED' ? (s.abandoned_from ?? 'INTAKE') : s.phase);
   const b = budgetOf(s);
+  const paused = pausedOf(loaded, terminal);
   const gate = (n: 1 | 2, passedAt: number, type: string): Lane['gates'][number] => ({
     n, status: reached >= passedAt ? 'passed' : openSteps(s).some((st) => st.kind === 'ask_human' && st.card?.type === type) ? 'waiting' : 'hollow',
   });
@@ -318,7 +325,23 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
     cards,
     needs_you: needs.map(({ stage: _stage, ...n }) => n),
     decisions,
+    ...(paused ? { paused } : {}),
   };
+}
+
+// The PAUSED notice (6-1): the newest stop fact, while it is newer than every command and every
+// main-agent tool fact of its session, on a run that has not ended.
+function pausedOf(loaded: RunInput, terminal: boolean): Paused | null {
+  if (terminal) return null;
+  let newest: AnyEvent | null = null;
+  for (const f of loaded.facts) if ((f.kind === 'stop_yielded' || f.kind === 'stop_forced') && (!newest || f.ts >= newest.ts)) newest = f;
+  if (!newest) return null;
+  const stop = newest;
+  const at = stop.ts;
+  if (loaded.commands.some((e) => e.ts >= at)) return null;
+  const mainTool = (f: AnyEvent): boolean => (TOOL_FACT_KINDS as readonly string[]).includes(f.kind) && f.session === stop.session && (f.data as { agent_id?: unknown }).agent_id === undefined;
+  if (loaded.facts.some((f) => mainTool(f) && f.ts >= at)) return null;
+  return stop.kind === 'stop_forced' ? { reason: 'block_cap', at, blocks: stop.data.blocks } : { reason: 'human_rejected', at };
 }
 
 // `ts` + `ms`, or null when `ts` is missing or not a real date (TS_RE admits month 13).

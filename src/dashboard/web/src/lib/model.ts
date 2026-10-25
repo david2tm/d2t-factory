@@ -113,6 +113,15 @@ export function clockTime(ts: string | null, seconds = false): string {
   return `${pad(t.getHours())}:${pad(t.getMinutes())}${seconds ? `:${pad(t.getSeconds())}` : ''}`;
 }
 
+// The lane header's PAUSED notice (6-1), or null: `PAUSED · you rejected a tool call 15:24` or
+// `PAUSED · the conductor stopped after 3 blocks 15:24`, in local time.
+export function pausedNotice(lane: Pick<Lane, 'paused'>): string | null {
+  const p = lane.paused;
+  if (!p) return null;
+  const why = p.reason === 'human_rejected' ? 'you rejected a tool call' : `the conductor stopped after ${p.blocks ?? '?'} blocks`;
+  return `PAUSED · ${why} ${clockTime(p.at)}`;
+}
+
 const gatePassed = (lane: Lane, n: 1 | 2): boolean => lane.gates.some((g) => g.n === n && g.status === 'passed');
 
 // Why an empty cell is empty. Only Backlog has a pending reason: before any slice exists it waits

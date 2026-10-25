@@ -8,7 +8,7 @@ import { projectRun, type Lane as CoreLane } from '../src/core/projection.ts';
 import { fold } from '../src/core/reducer.ts';
 import { readLines } from '../src/store/jsonl.ts';
 import {
-  activeCardId, ago, budgetClock, cells, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
+  activeCardId, ago, budgetClock, cells, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
 } from '../src/dashboard/web/src/lib/model.ts';
 import type { Lane } from '../src/dashboard/web/src/lib/types.ts';
 
@@ -231,4 +231,13 @@ test('time box meter (3-4): `12 / 30 min` against the browser clock, amber (over
   assert.deepEqual(timeboxMeter(card, ends + 4 * 60_000), { text: '34 / 30 min', fill: 1, over: true });
   assert.equal(timeboxMeter({}, ends), null);
   assert.equal(timeboxMeter({ timebox_ends_at: 'nope', timebox_min: 30 }, ends), null);
+});
+
+test('PAUSED notice (6-1): the reason and the local clock time of the stop; none without a pause', () => {
+  const at = '2026-10-24T13:24:00.000Z';
+  assert.equal(pausedNotice({ paused: { reason: 'human_rejected', at } }), `PAUSED · you rejected a tool call ${clockTime(at)}`);
+  assert.equal(pausedNotice({ paused: { reason: 'block_cap', at, blocks: 3 } }), `PAUSED · the conductor stopped after 3 blocks ${clockTime(at)}`);
+  assert.match(pausedNotice({ paused: { reason: 'block_cap', at, blocks: 3 } })!, /^PAUSED · the conductor stopped after 3 blocks \d\d:\d\d$/);
+  assert.equal(pausedNotice({}), null);
+  assert.equal(pausedNotice(lane(happy)), null);
 });

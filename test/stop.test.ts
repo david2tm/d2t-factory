@@ -1,7 +1,9 @@
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { initialState, type RunState, type Step } from '../src/core/reducer.ts';
-import { mayStop } from '../src/core/stop.ts';
+import { humanRejection, lastHumanTurn, mayStop } from '../src/core/stop.ts';
 
 function state(steps: Partial<Step>[], phase: RunState['phase'] = 'BUILD'): RunState {
   const s = initialState();
@@ -81,4 +83,71 @@ test('the reported subject of an open escalation is parked: the card alone may e
   assert.equal(mayStop(s, []).may, true);
   s.asks.A.open = false;
   assert.equal(mayStop(s, []).may, false);
+});
+
+// --- 6-1 transcript readers, over the pinned real records (test/fixtures/transcripts) -------------
+
+const FIX = join(import.meta.dirname, 'fixtures', 'transcripts');
+const pinned = (name: string): Record<string, any> => JSON.parse(readFileSync(join(FIX, `${name}.jsonl`), 'utf8'));
+const SESSION = '11111111-1111-4111-8111-111111111111';
+const REJECTED = pinned('user-rejected');
+const GUARD = pinned('permission-rule');
+const REJECTED_ID = 'toolu_011hXwq9VmqYWL6RKppEQ6GA';
+const humanTurn = (uuid: string): object => ({ type: 'user', uuid, sessionId: SESSION, turnOrigin: 'human', message: { role: 'user', content: '/factory go' } });
+// What a Stop block's feedback looks like in the transcript: isMeta, no turnOrigin.
+const stopFeedback = { type: 'user', uuid: 'meta-1', sessionId: SESSION, isMeta: true, message: { role: 'user', content: 'Stop hook feedback: ...' } };
+const REJECT_TEXT = "The user doesn't want to proceed with this tool use. The tool use was rejected";
+
+test('the pinned records keep the structured denial fields the readers match on', () => {
+  assert.deepEqual([REJECTED.toolDenialKind, REJECTED.permissionDecision.source, REJECTED.version], ['user-rejected', 'user_reject', '2.1.310']);
+  assert.deepEqual([GUARD.toolDenialKind, GUARD.permissionDecision.source, GUARD.permissionDecision.reasonCode], ['permission-rule', 'hook', 'hook:PreToolUse']);
+});
+
+test('humanRejection: a human-rejected tool use after the last human turn matches, across Stop feedback', () => {
+  assert.equal(humanRejection([humanTurn('h1'), REJECTED], SESSION), REJECTED_ID);
+  assert.equal(humanRejection([humanTurn('h1'), REJECTED, stopFeedback], SESSION), REJECTED_ID);
+  assert.equal(humanRejection([REJECTED], SESSION), REJECTED_ID, 'no human turn at all: the whole transcript is the turn');
+});
+
+test('humanRejection: echoed text, guard and deny-rule records, earlier turns, sidechains and other sessions never match', () => {
+  const echoedAssistant = { type: 'assistant', sessionId: SESSION, message: { role: 'assistant', content: [{ type: 'text', text: REJECT_TEXT }] } };
+  const echoedResult = { type: 'user', sessionId: SESSION, message: { role: 'user', content: [{ type: 'tool_result', content: `${REJECT_TEXT} user_reject user-rejected`, is_error: true, tool_use_id: 'toolu_x' }] } };
+  const { toolDenialKind: _k, permissionDecision: _p, ...blob } = REJECTED; // an api-request-blob style repeat
+  assert.equal(humanRejection([humanTurn('h1'), echoedAssistant, echoedResult, blob], SESSION), null);
+  assert.equal(humanRejection([humanTurn('h1'), GUARD], SESSION), null);
+  assert.equal(humanRejection([humanTurn('h1'), { ...GUARD, permissionDecision: { decision: 'reject', source: 'config' } }], SESSION), null);
+  assert.equal(humanRejection([humanTurn('h1'), REJECTED, humanTurn('h2')], SESSION), null, 'rejected before the last human turn');
+  assert.equal(humanRejection([humanTurn('h1'), { ...REJECTED, isSidechain: true }], SESSION), null);
+  assert.equal(humanRejection([humanTurn('h1'), { ...REJECTED, sessionId: 'other' }], SESSION), null);
+  assert.equal(humanRejection([humanTurn('h1'), { ...REJECTED, permissionDecision: { ...REJECTED.permissionDecision, decision: 'allow' } }], SESSION), null);
+  const noError = { ...REJECTED, message: { ...REJECTED.message, content: [{ ...REJECTED.message.content[0], is_error: false }] } };
+  assert.equal(humanRejection([humanTurn('h1'), noError], SESSION), null);
+  assert.equal(humanRejection([humanTurn('h1'), null, 'x', [], { type: 'user' }], SESSION), null);
+});
+
+test('lastHumanTurn: the uuid of the last human prompt; Stop feedback (isMeta) and other entries are not turns', () => {
+  assert.equal(lastHumanTurn([]), null);
+  assert.equal(lastHumanTurn([humanTurn('h1'), REJECTED, stopFeedback]), 'h1');
+  assert.equal(lastHumanTurn([humanTurn('h1'), humanTurn('h2'), GUARD]), 'h2');
+  assert.equal(lastHumanTurn([humanTurn('h1'), { ...stopFeedback, turnOrigin: 'human' }]), 'h1');
+});
+
+// A non-human turn (a task notification) and the conductor's own entries after a rejection.
+const notificationTurn = { type: 'user', uuid: 'n1', sessionId: SESSION, message: { role: 'user', content: '<task-notification>done</task-notification>' } };
+const assistantText = { type: 'assistant', sessionId: SESSION, message: { role: 'assistant', content: [{ type: 'text', text: 'Waiting on you.' }] } };
+const assistantToolUse = { type: 'assistant', sessionId: SESSION, message: { role: 'assistant', content: [{ type: 'text', text: 'Retrying.' }, { type: 'tool_use', id: 'toolu_next', name: 'Bash', input: {} }] } };
+
+test('humanRejection (review 2026-10-25): a main-thread tool use after the rejection spends it, and any older one', () => {
+  assert.equal(humanRejection([humanTurn('h1'), REJECTED, assistantToolUse], SESSION), null, 'the conductor works on with the feedback');
+  assert.equal(humanRejection([humanTurn('h1'), REJECTED, notificationTurn, assistantToolUse, stopFeedback], SESSION), null, 'a notification turn, then a tool use');
+  assert.equal(humanRejection([humanTurn('h1'), { ...REJECTED, uuid: 'old' }, assistantToolUse, GUARD], SESSION), null, 'an older rejection before that tool use never matches');
+  // A sidechain tool use (a subagent's) doesn't spend it.
+  assert.equal(humanRejection([humanTurn('h1'), REJECTED, { ...assistantToolUse, isSidechain: true }], SESSION), REJECTED_ID);
+  // Nor does another session's (the same scope the rejection match uses).
+  assert.equal(humanRejection([humanTurn('h1'), REJECTED, { ...assistantToolUse, sessionId: 'other' }], SESSION), REJECTED_ID);
+});
+
+test('humanRejection (review 2026-10-25): a non-human turn with text only keeps the rejection', () => {
+  assert.equal(humanRejection([humanTurn('h1'), REJECTED, notificationTurn, assistantText], SESSION), REJECTED_ID);
+  assert.equal(lastHumanTurn([humanTurn('h1'), REJECTED, notificationTurn, assistantText]), 'h1');
 });

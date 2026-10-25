@@ -15,12 +15,14 @@ export const DECISION_KINDS = [
 ] as const;
 export const FACT_KINDS = [
   'human_prompt', 'prompt_text', 'session_started', 'session_ended', 'subagent_started',
-  'subagent_stopped', 'tool_succeeded', 'tool_failed', 'output_written',
+  'subagent_stopped', 'tool_succeeded', 'tool_failed', 'output_written', 'stop_yielded', 'stop_forced',
 ] as const;
 
 export type CommandKind = (typeof COMMAND_KINDS)[number];
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 export type FactKind = (typeof FACT_KINDS)[number];
+// The facts of a tool call landing: they reset the Stop block count and clear PAUSED (6-1).
+export const TOOL_FACT_KINDS: readonly FactKind[] = ['tool_succeeded', 'tool_failed', 'output_written'];
 export type Kind = CommandKind | DecisionKind | FactKind;
 
 export const STEP_KINDS = ['spawn', 'resume', 'ask_human', 'run_check', 'enter_worktree', 'exit_worktree'] as const;
@@ -123,6 +125,10 @@ export interface DataByKind {
   tool_succeeded: { tool_name: string; tool_use_id?: string; agent_id?: string; command?: string; duration_ms?: number };
   tool_failed: { tool_name: string; tool_use_id?: string; agent_id?: string; command?: string; exit_code: number | null };
   output_written: { path: string; tool_use_id?: string; agent_id?: string; first_line?: string };
+  // 6-1 (AD-12), additive: the Stop hook let the holder's turn end because the human rejected a tool
+  // call this turn, or because it had already blocked STOP_BLOCK_MAX times in a row (reason: mayStop's).
+  stop_yielded: { reason: 'human_rejected'; tool_use_id: string };
+  stop_forced: { blocks: number; reason: string };
 }
 
 export interface Envelope<K extends Kind = Kind> {
@@ -187,6 +193,8 @@ const REQUIRED: Record<Kind, Shape> = {
   tool_succeeded: { tool_name: 'string' },
   tool_failed: { tool_name: 'string', exit_code: 'number|null' },
   output_written: { path: 'string' },
+  stop_yielded: { reason: 'string', tool_use_id: 'string' },
+  stop_forced: { blocks: 'number', reason: 'string' },
 };
 
 const COMMAND_ACTORS: readonly string[] = ['cli', 'conductor', 'human'];

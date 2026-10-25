@@ -289,3 +289,34 @@ test('an abandon in BUILD (3-4) seals every live slice: S1 and S2 started, S3 in
   ]);
   assert.deepEqual(l.cards.filter((c) => c.kind === 'slice').map((c) => [c.id, c.seals]), [['slice:S1', [ab.id]], ['slice:S2', [ab.id]], ['slice:S3', []]]);
 });
+
+test('PAUSED (6-1): the newest stop fact shows until a later command or main-agent tool fact of its session; subagent and other-session facts keep it; terminal runs and runs without stop facts have none', () => {
+  const all = load('happy-path');
+  const commands = upTo(all, (e) => e.kind === 'step_verified');
+  const last = commands.at(-1)!.ts;
+  const fact = (kind: string, data: object, ms: number, session = SESSION): AnyEvent => ev(kind, data, { ts: plus(last, ms), actor: 'hook', session });
+  const yielded = fact('stop_yielded', { reason: 'human_rejected', tool_use_id: 'toolu_1' }, 1000);
+  const forced = fact('stop_forced', { blocks: 3, reason: 'step S is issued' }, 2000);
+  assert.deepEqual(lane(commands, [yielded]).paused, { reason: 'human_rejected', at: yielded.ts });
+  assert.deepEqual(lane(commands, [yielded, forced]).paused, { reason: 'block_cap', at: forced.ts, blocks: 3 });
+  // Kept by a subagent's tool fact, by another session's, and by non-tool facts.
+  const kept = [
+    fact('tool_succeeded', { tool_name: 'Bash', agent_id: 'a1' }, 3000),
+    fact('tool_succeeded', { tool_name: 'Bash' }, 3000, 'other-session'),
+    fact('subagent_stopped', { agent_id: 'a1' }, 3000),
+  ];
+  assert.equal(lane(commands, [forced, ...kept]).paused?.reason, 'block_cap');
+  // Cleared by the conductor's next tool call, command or written output.
+  assert.equal(lane(commands, [forced, fact('tool_succeeded', { tool_name: 'Bash' }, 3000)]).paused, undefined);
+  assert.equal(lane(commands, [forced, fact('tool_failed', { tool_name: 'Bash', exit_code: 1 }, 3000)]).paused, undefined);
+  assert.equal(lane(commands, [forced, fact('output_written', { path: '/x' }, 3000)]).paused, undefined);
+  assert.equal(lane(all.slice(0, commands.length + 1).map((e, i) => (i === commands.length ? { ...e, ts: plus(last, 3000) } : e)), [forced]).paused, undefined);
+  // A tool fact older than the stop doesn't clear it.
+  assert.equal(lane(commands, [fact('tool_succeeded', { tool_name: 'Bash' }, 500), yielded]).paused?.reason, 'human_rejected');
+  // Terminal: no notice. No stop facts: no key at all, so recordings project as before.
+  assert.equal(lane(all, [fact('stop_forced', { blocks: 3, reason: 'r' }, Date.parse(all.at(-1)!.ts) - Date.parse(last) + 1000)]).paused, undefined);
+  for (const name of ['happy-path', 'findings-escalation-rework', 'illegal-then-abandon']) {
+    const events = load(name);
+    for (let i = 1; i <= events.length; i++) assert.equal('paused' in lane(events.slice(0, i)), false, `${name} @${i}`);
+  }
+});

@@ -1,5 +1,5 @@
-// Session binding files (AD-25), the prompt inbox and consumption ledger (AD-26), the transcript
-// locate (AD-6) and holder liveness.
+// Session binding files (AD-25), the Stop hook's block counter (AD-12), the prompt inbox and
+// consumption ledger (AD-26), the transcript locate (AD-6) and holder liveness.
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { basename, dirname, sep } from 'node:path';
@@ -7,7 +7,7 @@ import type { Envelope } from '../core/events.ts';
 import { validateEvent } from '../core/events.ts';
 import { readLines } from './jsonl.ts';
 import { claimDir } from './locks.ts';
-import { claudeAgentsFile, claudeProjectsDir, consumedDir, consumedReasonFile, inboxFile, pluginEnvFile, projectTranscript, sessionFile, sessionsDir } from './paths.ts';
+import { claudeAgentsFile, claudeProjectsDir, consumedDir, consumedReasonFile, inboxFile, pluginEnvFile, projectTranscript, sessionFile, sessionsDir, stopFile } from './paths.ts';
 import { nowIso } from './ids.ts';
 
 // Session and prompt IDs become path segments, so only plain names are accepted.
@@ -74,6 +74,7 @@ export function readSessionFile(session: string): SessionBinding | null {
 
 export function deleteSessionFile(session: string): void {
   rmSync(sessionFile(session), { force: true });
+  rmSync(stopFile(session), { force: true });
 }
 
 // Session files recorded under this exact process identity. A null pid or start never matches.
@@ -90,6 +91,35 @@ export function findByIdentity(pid: number | null, start: string | null): Sessio
     if (b && b.claude_pid === pid && b.claude_start === start) out.push({ ...b, session });
   }
   return out;
+}
+
+// --- Stop block counter (6-1, AD-12) ---------------------------------------------------------
+
+// sessions/<session>.stop: consecutive blocks, the newest main tool fact id and the last human
+// transcript entry's uuid when they were counted (either changing resets the count), and the
+// tool_use_ids a stop_yielded already recorded.
+export interface StopCounter { blocks: number; tool_fact: string | null; human_turn: string | null; yielded: string[] }
+
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+// The counter, or null when absent or unreadable. Malformed fields fall back to their empty value.
+export function readStopFile(session: string): StopCounter | null {
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(stopFile(session), 'utf8')); } catch { return null; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const x = raw as Record<string, unknown>;
+  const blocks = typeof x.blocks === 'number' && Number.isInteger(x.blocks) && x.blocks >= 0 ? x.blocks : 0;
+  const yielded = Array.isArray(x.yielded) ? x.yielded.filter((y): y is string => typeof y === 'string') : [];
+  return { blocks, tool_fact: strOrNull(x.tool_fact), human_turn: strOrNull(x.human_turn), yielded };
+}
+
+// Atomic, like the session file.
+export function writeStopFile(session: string, c: StopCounter): void {
+  const file = stopFile(session);
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(c) + '\n');
+  renameSync(tmp, file);
 }
 
 // --- plugin environment (AD-19) --------------------------------------------------------------

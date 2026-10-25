@@ -2,7 +2,7 @@
   // One run's swimlane: the Swimlane header (conductor, run id, task, origin, stage, the Budget
   // clock, the Stage track) and one row of five cells. A labeled region: `Run <run-id>`.
   import { receive, send } from '../lib/glide.ts';
-  import { activeCardId, ago, cells, emptyCellCopy, isReviewer, laneKey, needsCell, stageTrack, stageWord } from '../lib/model.ts';
+  import { activeCardId, ago, cells, emptyCellCopy, isReviewer, laneKey, needsCell, pausedNotice, stageTrack, stageWord } from '../lib/model.ts';
   import type { BoardCard, Lane } from '../lib/types.ts';
   import Agent from './Agent.svelte';
   import BudgetClock from './BudgetClock.svelte';
@@ -20,6 +20,7 @@
   const empty = $derived(emptyCellCopy(lane, 'backlog'));
   const track = $derived(stageTrack(lane));
   const word = $derived(stageWord(lane));
+  const paused = $derived(pausedNotice(lane));
   const lostId = $derived(lane.live?.signal_lost ? activeCardId(lane) : null);
   const lost = $derived(lostId ? ago(lane.last_event_at, now) : null);
 
@@ -49,6 +50,7 @@
       <h2>{lane.task ?? 'Untitled run'}</h2>
       <span class="tag-soft">{lane.origin}</span>
       <span class="stage-now">STAGE <b class:g={word.gold}>{word.text}</b></span>
+      {#if paused}<span class="paused">{paused}</span>{/if}
     </div>
     <!-- The Budget clock, once intake is confirmed; the slot keeps its width before that. -->
     <div class="budget"><BudgetClock budget={lane.budget} {now} /></div>
@@ -123,6 +125,7 @@
   .stage-now { font: 600 11px/1 var(--mono); color: var(--text-3); letter-spacing: .08em; margin-left: 4px; white-space: nowrap; }
   .stage-now b { color: var(--holo); font-weight: 700; }
   .stage-now b.g { color: var(--gold); }
+  .paused { font: 600 11px/1 var(--mono); color: var(--text-2); letter-spacing: .04em; white-space: nowrap; }
   .budget { width: 236px; min-height: 1px; }
 
   .track { grid-column: 1 / -1; display: flex; align-items: center; margin: 0; padding: 0; list-style: none; }

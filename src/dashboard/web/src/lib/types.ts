@@ -87,8 +87,11 @@ export interface Lane {
   cards: BoardCard[];
   needs_you: NeedsYou[];
   decisions: Decision[];
+  paused?: Paused; // 6-1: the conductor's turn ended through a recorded Stop exit, and nothing has happened since
   live?: { signal_lost: boolean };
 }
+
+export interface Paused { reason: 'human_rejected' | 'block_cap'; at: string; blocks?: number }
 
 export interface Board { runs: Lane[] }
 

@@ -405,6 +405,124 @@ test('Stop: allowed at ask_human or with the step running in the background; oth
   silent(stop(s1));
 });
 
+// 6-1: the pinned real transcript records (test/fixtures/transcripts), whose sessionId is S61.
+const S61 = '11111111-1111-4111-8111-111111111111';
+const pinnedLine = (name: string): string => readFileSync(join(ROOT, 'test', 'fixtures', 'transcripts', `${name}.jsonl`), 'utf8').trim();
+const REJECTED_ID = 'toolu_011hXwq9VmqYWL6RKppEQ6GA';
+const toTranscript = (w: World, session: string, ...lines: (string | object)[]): void => {
+  for (const l of lines) appendFileSync(transcript(w, session), (typeof l === 'string' ? l : JSON.stringify(l)) + '\n');
+};
+// A human prompt as Claude Code writes it: a user entry with turnOrigin human and its own uuid.
+const humanTurnLine = (session: string): object => ({ type: 'user', uuid: randomUUID(), sessionId: session, turnOrigin: 'human', message: { role: 'user', content: 'go on' } });
+const stopCounter = (w: World, session: string): any => { try { return JSON.parse(readFileSync(join(w.home, 'sessions', `${session}.stop`), 'utf8')); } catch { return null; } };
+
+// A holder at INTAKE with a spawn step it isn't running: every Stop would block.
+function blockingRun(w: World): { id: string; spawn: string; stop: () => Out } {
+  const id = started(w, S61);
+  ok(cli(w, ['next', '--session', S61]));
+  const spawn = appendCommand(w, id, 'step_issued', { kind: 'spawn', stage: 'INTAKE', attempt: 1, role: 'builder', agent: 'd2t-factory:builder' });
+  const stop = (): Out => hook(w, 'Stop', { ...base(w, S61), hook_event_name: 'Stop', stop_hook_active: true, last_assistant_message: 'x', background_tasks: [] });
+  return { id, spawn, stop };
+}
+const stopFacts = (w: World, id: string): any[] => factFile(w, id, S61).filter((f) => f.kind === 'stop_yielded' || f.kind === 'stop_forced');
+
+test('Stop (6-1): a tool use the human rejected this turn lets the stop through, with one stop_yielded per tool_use_id', () => {
+  const w = world();
+  const { id, stop } = blockingRun(w);
+  assert.equal(ok(stop()).decision, 'block');
+  toTranscript(w, S61, pinnedLine('user-rejected'));
+  silent(stop());
+  silent(stop());
+  const facts = stopFacts(w, id);
+  valid(facts);
+  assert.deepEqual(facts.map((f) => [f.kind, f.data]), [['stop_yielded', { reason: 'human_rejected', tool_use_id: REJECTED_ID }]]);
+  assert.equal(stopCounter(w, S61).blocks, 0, 'an allowed stop resets the count');
+  assert.deepEqual(stopCounter(w, S61).yielded, [REJECTED_ID]);
+  // A new human prompt ends that turn: the old rejection no longer counts.
+  toTranscript(w, S61, humanTurnLine(S61));
+  assert.equal(ok(stop()).decision, 'block');
+  assert.equal(stopCounter(w, S61).blocks, 1);
+  // Unbound and non-holder sessions pass and leave no counter.
+  silent(hook(w, 'Stop', { ...base(w, 'unbound'), hook_event_name: 'Stop', background_tasks: [] }));
+  writeFileSync(join(w.home, 'sessions', 'stale.json'), JSON.stringify({ ...sessionFile(w, S61), session: 'stale' }));
+  silent(hook(w, 'Stop', { ...base(w, 'stale'), hook_event_name: 'Stop', background_tasks: [] }));
+  assert.equal(stopCounter(w, 'unbound'), null);
+  assert.equal(stopCounter(w, 'stale'), null);
+  assert.equal(stopFacts(w, id).length, 1);
+  assert.equal(existsSync(join(w.home, 'hook-errors.log')), false);
+});
+
+test('Stop (6-1, review): a text-only notification turn keeps the rejection; the conductor\'s next tool use spends it', () => {
+  const w = world();
+  const { id, stop } = blockingRun(w);
+  toTranscript(w, S61, pinnedLine('user-rejected'));
+  silent(stop());
+  toTranscript(w, S61,
+    { type: 'user', uuid: randomUUID(), sessionId: S61, message: { role: 'user', content: '<task-notification>done</task-notification>' } },
+    { type: 'assistant', sessionId: S61, message: { role: 'assistant', content: [{ type: 'text', text: 'Waiting on you.' }] } });
+  silent(stop());
+  assert.equal(stopFacts(w, id).length, 1, 'still the one stop_yielded');
+  toTranscript(w, S61, { type: 'assistant', sessionId: S61, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_next', name: 'Bash', input: { command: 'ls' } }] } });
+  assert.equal(ok(stop()).decision, 'block');
+  assert.equal(stopCounter(w, S61).blocks, 1);
+  assert.deepEqual(stopFacts(w, id).map((f) => f.kind), ['stop_yielded'], 'no second stop_yielded');
+  assert.equal(existsSync(join(w.home, 'hook-errors.log')), false);
+});
+
+test('Stop (6-1): the block holds when the counter can\'t be written, and the failure is logged', () => {
+  const w = world();
+  const { stop } = blockingRun(w);
+  mkdirSync(join(w.home, 'sessions', `${S61}.stop`));
+  assert.equal(ok(stop()).decision, 'block');
+  const log = join(w.home, 'hook-errors.log');
+  assert.ok(existsSync(log));
+  assert.ok(readLines<any>(log).items.some((l) => l.event === 'Stop'));
+});
+
+test('Stop (6-1): echoed rejection text and guard denials still block; the 4th text-only stop passes as stop_forced; a main tool fact or a human prompt resets the count', () => {
+  const w = world();
+  const { id, spawn, stop } = blockingRun(w);
+  const echo = "The user doesn't want to proceed with this tool use. The tool use was rejected";
+  toTranscript(w, S61, pinnedLine('permission-rule'),
+    { type: 'assistant', sessionId: S61, message: { role: 'assistant', content: [{ type: 'text', text: echo }] } },
+    { type: 'user', sessionId: S61, message: { role: 'user', content: [{ type: 'tool_result', content: echo, is_error: true, tool_use_id: 'toolu_echo' }] } });
+  for (let i = 1; i <= 3; i++) {
+    assert.equal(ok(stop()).decision, 'block', `stop ${i}`);
+    assert.equal(stopCounter(w, S61).blocks, i);
+  }
+  silent(stop()); // the 4th
+  const forced = stopFacts(w, id);
+  valid(forced);
+  assert.deepEqual(forced.map((f) => [f.kind, f.data.blocks]), [['stop_forced', 3]]);
+  assert.ok(forced[0].data.reason.includes(spawn), forced[0].data.reason);
+  assert.equal(ok(stop()).decision, 'block', 'the 5th blocks again');
+  assert.equal(stopCounter(w, S61).blocks, 1);
+  // Block, (block), main tool fact, block, block: the tool fact restarts the count, so all block.
+  assert.equal(ok(stop()).decision, 'block');
+  assert.equal(stopCounter(w, S61).blocks, 2);
+  silent(hook(w, 'PostToolUse', { ...base(w, S61), hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'toolu_ls', tool_response: {} }));
+  assert.equal(ok(stop()).decision, 'block');
+  assert.equal(stopCounter(w, S61).blocks, 1);
+  assert.equal(ok(stop()).decision, 'block');
+  assert.equal(stopCounter(w, S61).blocks, 2);
+  // A human prompt (after an interrupt, which fires no Stop) also restarts it.
+  toTranscript(w, S61, humanTurnLine(S61));
+  assert.equal(ok(stop()).decision, 'block');
+  assert.equal(stopCounter(w, S61).blocks, 1);
+  // A rejection before the last human prompt is history: still counted and blocked.
+  toTranscript(w, S61, pinnedLine('user-rejected'), humanTurnLine(S61));
+  assert.equal(ok(stop()).decision, 'block');
+  assert.equal(stopCounter(w, S61).blocks, 1);
+  assert.equal(stopFacts(w, id).length, 1, 'no stop_yielded');
+  // A terminal run passes without touching the counter.
+  const before = stopCounter(w, S61);
+  type(w, S61, '/factory abandon');
+  ok(cli(w, ['decide', '--session', S61]));
+  silent(stop());
+  assert.deepEqual(stopCounter(w, S61), before);
+  assert.equal(existsSync(join(w.home, 'hook-errors.log')), false);
+});
+
 test('guard: in a bound session, factory-owned writes are denied except the claimed step dir and the conductor\'s plain factory call', () => {
   const w = world();
   const s1 = randomUUID();
