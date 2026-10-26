@@ -32,13 +32,21 @@ const contractField = (state: RunState, k: string): string | undefined => {
 };
 
 // A contract command's environment: PORT, and (6-4) FACTORY_CACHE_DIR, the run's own tool cache,
-// created first.
-function sh(command: string, cwd: string, port: number | undefined, timeout: number, cacheDir: string): { code: number; log: string } {
+// created first. A command that hits the timeout (or is killed by a signal) fails with 124, even
+// when sh itself exited 0 while a backgrounded grandchild held stdout open. It runs in its own
+// process group, killed whole on the timeout, so no grandchild holding the output outlives it.
+export function sh(command: string, cwd: string, port: number | undefined, timeout: number, cacheDir: string): { code: number; log: string } {
   mkdirSync(cacheDir, { recursive: true });
   const env = { ...process.env, ...(port !== undefined ? { PORT: String(port) } : {}), FACTORY_CACHE_DIR: cacheDir };
-  const r = spawnSync('sh', ['-c', command], { cwd, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024, env });
-  const code = r.status ?? 124; // killed by the timeout
-  return { code, log: `$ ${command}\n${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `\n${r.error.message}` : ''}\n[exit ${code}]\n` };
+  const r = spawnSync('sh', ['-c', command], { cwd, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024, env, detached: true });
+  const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' || r.signal !== null;
+  if (timedOut && r.pid) {
+    try { process.kill(-r.pid, 'SIGKILL'); } catch { /* the group is already gone */ }
+  }
+  const code = timedOut ? 124 : r.status ?? 124;
+  const err = r.error && (r.error as NodeJS.ErrnoException).code !== 'ETIMEDOUT' ? ` (${r.error.message})` : '';
+  const note = timedOut ? `\ntimed out after ${timeout} ms${r.signal ? `, ${r.signal}` : ''}${err}` : r.error ? `\n${r.error.message}` : '';
+  return { code, log: `$ ${command}\n${r.stdout ?? ''}${r.stderr ?? ''}${note}\n[exit ${code}]\n` };
 }
 
 async function httpOk(url: string): Promise<boolean> {

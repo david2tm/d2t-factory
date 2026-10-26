@@ -198,3 +198,32 @@ test('artifactData: redacted, capped on a UTF-8 boundary, pinned to the reported
     if (prev === undefined) delete process.env.FACTORY_HOME; else process.env.FACTORY_HOME = prev;
   }
 });
+
+// --- check timeouts (sh) -------------------------------------------------------------------------
+
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test('sh: a command that hits the timeout fails with 124 and "timed out", even when sh exits 0 while a grandchild holds stdout', async () => {
+  const { sh } = await import('../src/cli/check.ts');
+  const cache = mkdtempSync(join(tmpdir(), 'factory-sh-'));
+  const r = sh('sleep 8 & echo started', cache, undefined, 500, join(cache, 'c'));
+  assert.equal(r.code, 124, r.log);
+  assert.match(r.log, /^started$/m);
+  assert.match(r.log, /timed out after 500 ms\n\[exit 124\]\n$/);
+  // A command that ends in time keeps its own status.
+  assert.equal(sh('exit 3', cache, undefined, 5_000, join(cache, 'c')).code, 3);
+  assert.equal(sh('true', cache, undefined, 5_000, join(cache, 'c')).code, 0);
+});
+
+test('sh: the timeout kills the whole process group, so a backgrounded grandchild does not outlive the check', async () => {
+  const { sh } = await import('../src/cli/check.ts');
+  const cache = mkdtempSync(join(tmpdir(), 'factory-sh-'));
+  const r = sh('sleep 7.77 & echo $!', cache, undefined, 500, join(cache, 'c'));
+  assert.equal(r.code, 124, r.log);
+  const pid = Number(/^(\d+)$/m.exec(r.log)?.[1]);
+  assert.ok(pid > 0, r.log);
+  // SIGKILL lands asynchronously: give the orphan a moment to be reaped.
+  const until = Date.now() + 2_000;
+  while (alive(pid) && Date.now() < until) await new Promise((res) => setTimeout(res, 20));
+  assert.equal(alive(pid), false, `sleep ${pid} is still running`);
+});
