@@ -4,7 +4,7 @@ import { cutCard, designChoiceCard, gate1Card, intakeCard, intakeConfirmCard } f
 import type { AnyEvent } from '../src/core/events.ts';
 import { apply, fold, initialState, type RunState } from '../src/core/reducer.ts';
 import { due, type WrapProbe } from '../src/core/schedule.ts';
-import { nextBacklog, rerunVoids } from '../src/core/verify.ts';
+import { approvedMerge, mergePending, nextBacklog, rerunVoids } from '../src/core/verify.ts';
 
 const started = (): RunState => fold([{ v: 1, id: 'A', ts: 't', run: 'r', kind: 'run_started', actor: 'cli', corr: '', data: { task: 't', repo_hash: 'h', base_sha: 's', branch: 'b' } } as any]);
 
@@ -576,6 +576,54 @@ test('WRAP: a probe problem (conflicts) raises a card without merge and without 
   assert.deepEqual(due(w3.s, ctx), []);
   w3.put('check_ran', { check: 'git.baseline', exit_code: 0, duration_ms: 1, basis_seq: 1, sha: 'h1', digest: 'd' });
   assert.equal(due(w3.s, ctx)[0].card!.commands[0], '/factory merge');
+});
+
+test('WRAP (dry run 2): an approved merge pending is due exit_worktree inside the worktree, once, and nothing outside it; a failed merge brings the card back with git\'s error on one line, capped', () => {
+  const w = toWrapState();
+  ranCheck(w, HEALTH_W, 0, 'h1');
+  ranCheck(w, TEST_W, 0, 'h1');
+  w.put('check_ran', { check: 'git.baseline', exit_code: 0, duration_ms: 1, basis_seq: 1, sha: 'h1', digest: 'd' });
+  const card = w.issue(due(w.s, { ...IN, wrap: PROBE })[0]);
+  w.put('merge_approved', { prompt_fact_id: 'f', sha: 'h1', target: 'main' }, { actor: 'human' });
+  w.put('step_claimed', { step_id: card });
+  w.put('step_verified', { step_id: card, evidence: [] });
+  assert.equal(mergePending(w.s, w.log), true);
+  const EXIT = { kind: 'exit_worktree', stage: 'WRAP', attempt: 1 };
+  assert.deepEqual(due(w.s, { ...IN, merge_pending: true }), [EXIT], 'inside the worktree: leave it before the merge');
+  assert.deepEqual(due(w.s, { ...OUT, merge_pending: true }), [], 'outside: the CLI merges');
+  assert.deepEqual(due(w.s, { ...IN, merge_pending: true, wrap: { ...PROBE, head: 'h2' } }), [EXIT], 'no merge card while pending');
+  const ex = w.issue(EXIT);
+  assert.deepEqual(due(w.s, { ...IN, merge_pending: true }), [], 'once');
+  w.finish(ex);
+  // The merge fails: the approval is spent only by a successful merge, so it is no longer pending.
+  const error = `error: unable to unlink old 'a.tsx': Operation not permitted\nerror: unable to unlink old 'b.tsx': Operation not permitted\n${'x'.repeat(400)}`;
+  w.put('check_ran', { check: 'git.merged', exit_code: 1, duration_ms: 1, basis_seq: 1, error });
+  assert.equal(mergePending(w.s, w.log), false);
+  assert.equal(w.s.checks.at(-1)!.error, error);
+  const [again] = due(w.s, { ...OUT, wrap: PROBE });
+  assert.deepEqual(again.card!.commands, ['/factory merge', '/factory rework S1 <note…>', '/factory abandon']);
+  const note = again.card!.reason!.split(' · ').at(-1)!;
+  assert.ok(note.startsWith("the last git merge failed and was aborted: error: unable to unlink old 'a.tsx': Operation not permitted error: unable to unlink old 'b.tsx'"), note);
+  assert.ok(!note.includes('\n'));
+  assert.equal(note.length, 'the last git merge failed and was aborted: '.length + 300);
+  assert.ok(note.endsWith('x…'));
+  // A fresh /factory merge is pending again.
+  w.put('merge_approved', { prompt_fact_id: 'g', sha: 'h1', target: 'main' }, { actor: 'human' });
+  assert.equal(mergePending(w.s, w.log), true);
+  w.put('check_ran', { check: 'git.merged', exit_code: 0, duration_ms: 1, basis_seq: 1, sha: 'm1' });
+  assert.equal(mergePending(w.s, w.log), false);
+  w.put('merged', { sha: 'm1', target: 'main' });
+  assert.equal(w.s.phase, 'MERGED');
+  assert.equal(mergePending(w.s, w.log), false);
+});
+
+test('approvedMerge: the last merge_approved wins', () => {
+  const w = toWrapState();
+  assert.deepEqual(approvedMerge(w.log), { sha: undefined, target: undefined });
+  w.put('merge_approved', { prompt_fact_id: 'f', sha: 'h1', target: 'main' }, { actor: 'human' });
+  w.put('check_ran', { check: 'git.merged', exit_code: 1, duration_ms: 1, basis_seq: 1, error: 'x' });
+  w.put('merge_approved', { prompt_fact_id: 'g', sha: 'h2', target: 'trunk' }, { actor: 'human' });
+  assert.deepEqual(approvedMerge(w.log), { sha: 'h2', target: 'trunk' });
 });
 
 test('MERGED: a conductor inside the worktree is due one exit_worktree; outside, nothing', () => {

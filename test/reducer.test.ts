@@ -195,6 +195,17 @@ const ev3 = (kind: string, data: object, o: { actor?: string } = {}): AnyEvent =
   ({ v: 1, id: `X${kind}${Math.random()}`, ts: '2026-10-24T10:00:00.000Z', run: 'r', session: 's', kind, actor: o.actor ?? 'cli', corr: 'c', data }) as unknown as AnyEvent;
 const started3 = (): AnyEvent => ev3('run_started', { task: 't', repo_hash: 'h', base_sha: 'b', branch: 'f/r' });
 
+test('check_ran keeps git\'s error only when it carries one (additive, dry run 2)', () => {
+  const s = fold([
+    started3(),
+    ev3('check_ran', { check: 'git.merged', exit_code: 1, duration_ms: 1, basis_seq: 1, error: 'no merges today' }),
+    ev3('check_ran', { check: 'git.merged', exit_code: 0, duration_ms: 1, basis_seq: 1, sha: 'm' }),
+  ]);
+  assert.equal(s.checks[0].error, 'no merges today');
+  assert.equal(Object.hasOwn(s.checks[1], 'error'), false);
+  for (const e of [ev3('check_ran', { check: 'git.merged', exit_code: 1, duration_ms: 1, basis_seq: 1, error: 'x' })]) assert.ok(validateEvent({ ...e, id: '01JQ00000000000000000000Q2' }).ok);
+});
+
 test('intake_confirmed records the intake and the clock start only when it carries them (additive)', () => {
   const intake = { limit_min: 100, slice_timebox_min: 30, ui_free: true, reviewer_overrides: { add: [], remove: [] } };
   const s = fold([started3(), ev3('intake_confirmed', { prompt_fact_id: 'f', intake, clock_start: '2026-10-24T08:00:00.000Z' }, { actor: 'human' })]);

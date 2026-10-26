@@ -34,7 +34,9 @@ export function mergeSettings(settings: Json, home: string): string[] {
   if (!dirs.some((d) => expandHome(d) === home)) { dirs.push(home); changed.push(`permissions.additionalDirectories += ${home}`); }
   const allow = list(perms, 'allow', 'permissions.allow');
   for (const rule of ALLOW_RULES) if (!allow.includes(rule)) { allow.push(rule); changed.push(`permissions.allow += ${rule}`); }
-  // AD-35: the sandbox write rule only when the user runs a sandbox.
+  // AD-35: the sandbox write rule only when the user runs a sandbox. The final git merge needs no
+  // rule: the CLI runs it only after the conductor has left the worktree, so the main checkout is the
+  // session's cwd, where the sandbox lets a command write (AD-8, dry run 2).
   const sb = settings.sandbox as Json | undefined;
   if (sb && typeof sb === 'object' && sb.enabled === true) {
     const fsCfg = obj(sb, 'filesystem', 'sandbox.filesystem');
@@ -44,7 +46,7 @@ export function mergeSettings(settings: Json, home: string): string[] {
   return changed;
 }
 
-// What setup cannot fix but the user must (the merge never touches these): with the sandbox on and
+// What setup cannot fix but the user must (mergeSettings never touches these): with the sandbox on and
 // local binding off, the dashboard and the run's dev server cannot listen.
 export function settingsWarnings(settings: Json, file: string): string[] {
   const sb = settings.sandbox as Json | undefined;

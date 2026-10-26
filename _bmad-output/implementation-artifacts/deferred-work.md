@@ -33,3 +33,11 @@
 - source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/6-3-claim-waiting-states-and-pinned-artifact-view.md`
   summary: Drawer focus return is lost when a claim chip or artifact button inside the Decision drawer swaps the drawer's content and the drawer is then closed.
   evidence: The in-drawer opener passes its own `data-src` (`srcId(...)`), and that element no longer exists after the swap, so `closeDrawer` (lib/drawer.ts) finds nothing to focus. The pattern predates 6-3 (the in-drawer ClaimChip); the fix is to carry the drawer's original `sel.src` through.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dry-run-2-wrap-merge-fix.md`
+  summary: Unverified (high if true): after `/clear` inside the worktree, `ExitWorktree` may be a no-op, so the pending merge's `exit_worktree` never verifies and the run reaches the reissue cap instead of merging.
+  evidence: ExitWorktree's docs say it only acts on worktrees entered with EnterWorktree "in this session", and the session's cwd survives `/clear` (AD-15). Settle it in dry run 3: `/clear` inside the worktree before `/factory merge`, then check that ExitWorktree returns the session to the main checkout. Before this change the same gap only skipped housekeeping; now it blocks the merge.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dry-run-2-wrap-merge-fix.md`
+  summary: Under the sandbox, the CLI's post-merge `git worktree remove` fails for the worktree the conductor entered, so a successful run ends with `worktree_error` and the worktree left behind.
+  evidence: Sandboxed check on 2026-10-26: after EnterWorktree(path) then ExitWorktree(keep), deleting `<wt>/.git`, `<wt>/.claude/.cc-writes` and `.git/worktrees/<name>/commondir` gave "Operation not permitted"; a worktree the session never entered was removed fine. Removal failure is already non-fatal and reported.

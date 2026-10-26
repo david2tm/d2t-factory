@@ -1,7 +1,8 @@
 // `factory decide` (AD-6, AD-26): the only consumer of prompt facts. Takes no decision arguments.
 // A decision verifies the open ask_human step it answers. Gate passes and the merge need their
 // evidence (AD-7) and pin the sha256 of what was approved (AD-10); reworks carry their voids (AD-33).
-// The approved merge itself runs here, unlocked, after merge_approved is appended (AD-8).
+// The approved merge itself is not run here: `next` runs it once the conductor has left the
+// worktree (AD-8, dry run 2).
 import { readFileSync } from 'node:fs';
 import { checkOutput, validateIntake } from '../core/artifacts.ts';
 import { clockStart, openCutAsk } from '../core/budget.ts';
@@ -18,11 +19,11 @@ import { withLock } from '../store/locks.ts';
 import { lockDir } from '../store/paths.ts';
 import { consumeWithoutCommand } from '../store/sessions.ts';
 import type { Args } from './args.ts';
-import { currentPlan, mergedCheck } from './check.ts';
+import { currentPlan } from './check.ts';
 import { releaseClaims } from './claims.ts';
-import { appendAll, gate, gateOrThrow, makeEvent } from './commit.ts';
+import { appendAll, gate, makeEvent } from './commit.ts';
 import { devserverDown } from './devserver.ts';
-import { currentBranch, head, insideRepo, mergeInto, repoHash, repoRoot, sha256, statusDigest } from './git.ts';
+import { currentBranch, head, insideRepo, repoHash, repoRoot, sha256, statusDigest } from './git.ts';
 import { consumeWith, embed, newestPrompt, supersede, type Prompt } from './prompt.ts';
 import { isRun, requireSession, resolveRun, type Resolution } from './resolve.ts';
 import { artifactData, reissueEvent, type Ctx } from './steps.ts';
@@ -246,31 +247,6 @@ function build(p: Prompt, c: Ctx, run: LoadedRun, kind: DecisionKind, base: Reco
   }
 }
 
-// After merge_approved: `git merge --no-ff <approved sha>` into the main checkout's current branch
-// (the message names the run branch), unlocked, then check_ran git.merged and (on success)
-// merged{sha, target} under the lock. The approved commit, not the branch ref: nothing that lands
-// on the branch after the approval is merged.
-async function mergeRun(c: Ctx, state: RunState, approved: string): Promise<Record<string, unknown>> {
-  const branch = state.branch!;
-  const into = currentBranch(c.root);
-  const t0 = Date.now();
-  const m = mergeInto(c.root, approved, `factory: merge ${branch} (${state.task ?? c.runId})`, { noFf: true });
-  const check = mergedCheck(c.root, approved);
-  const duration_ms = Date.now() - t0;
-  return withLock(lockDir(c.hash, c.runId), () => {
-    const cur = loadRun(c.hash, c.runId).state;
-    const ran = makeEvent(c.runId, 'check_ran', {
-      check: 'git.merged', exit_code: m.ok ? check.exit_code : 1, duration_ms, basis_seq: state.seq, command: `git merge --no-ff ${approved} (${branch})`, ...(m.ok ? { sha: m.sha } : {}),
-    }, { corr: state.run_id! });
-    const events: AnyEvent[] = [ran];
-    if (m.ok && check.exit_code === 0) events.push(makeEvent(c.runId, 'merged', { sha: m.sha, ...(into ? { target: into } : {}) }, { corr: ran.id }));
-    const after = gateOrThrow(cur, events);
-    appendAll(c.hash, c.runId, events);
-    if (!m.ok) throw new FactoryError('CHECK_FAILED', `git merge into ${into ?? 'HEAD'} failed and was aborted: ${redact(m.error, readRedactValues(c.hash, c.runId))}`);
-    return { phase: after.phase, stage: boardStage(after), merged: m.sha, target: into };
-  });
-}
-
 export async function decide(args: Args): Promise<unknown> {
   const session = requireSession(args);
   const extra = Object.keys(args.flags).filter((f) => f !== 'session');
@@ -322,7 +298,7 @@ export async function decide(args: Args): Promise<unknown> {
     consumeWith(p, 'decided', () => appendAll(hash, id, events));
     for (const x of events) if (x.kind === 'step_verified' && !verified.includes((x.data as { step_id: string }).step_id)) verified.push((x.data as { step_id: string }).step_id);
     const reissued = events.find((x) => x.kind === 'step_reissued');
-    return { state: g.state, approved: dec.kind === 'merge_approved' ? String((e.data as { sha?: unknown }).sha) : undefined, out: { decision: dec.kind, run_id: id, phase: g.state.phase, stage: boardStage(g.state), verified, prompt_id: p.prompt_id, ...(reissued ? { reissued: (reissued.data as { new: string }).new } : {}) } };
+    return { state: g.state, out: { decision: dec.kind, run_id: id, phase: g.state.phase, stage: boardStage(g.state), verified, prompt_id: p.prompt_id, ...(reissued ? { reissued: (reissued.data as { new: string }).new } : {}) } };
   });
   // AD-20: once run_abandoned is on disk, the dev server is killed, then the port and the
   // exclusive claim are released.
@@ -336,6 +312,5 @@ export async function decide(args: Args): Promise<unknown> {
     }
     releaseClaims(hash, id, res.state.port);
   }
-  if (res.approved) return { ...res.out, ...(await mergeRun(c, res.state, res.approved)) };
   return res.out;
 }

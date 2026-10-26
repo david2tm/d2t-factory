@@ -941,6 +941,7 @@ function builds(r: Run, st: any, files: Record<string, string | null>, agentId: 
 
 const headOf = (dir: string): string => git(dir, 'rev-parse', 'HEAD').trim();
 const branchOf = (dir: string): string => git(dir, 'symbolic-ref', '--short', 'HEAD').trim();
+const isAncestorIn = (dir: string, a: string, b: string): boolean => spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: dir }).status === 0;
 const commitIn = (dir: string, file: string, text: string, msg: string): void => {
   writeFileSync(join(dir, file), text);
   git(dir, 'add', file);
@@ -1144,7 +1145,7 @@ test('a manifest change raises New dependency at close; accept closes; a failing
   ok(decide(w, 'sa', 'abandon', { cwd: wt }));
 });
 
-test('WRAP integrates a moved target cleanly; merge is refused on a changed main checkout, a detached HEAD or a moved target, then merges --no-ff; a failed worktree removal is reported and the run still completes', (t) => {
+test('WRAP integrates a moved target cleanly; merge is refused on a changed main checkout, a detached HEAD or a moved target; an approved merge waits for exit_worktree, is refused once main moved or left the approved branch (the card comes back each time), then merges the latest approval --no-ff; a failed worktree removal is reported and the run still completes', (t) => {
   const w = world();
   const r = toBuild(w, 'sa', t);
   const { id, c, wt } = r;
@@ -1178,25 +1179,62 @@ test('WRAP integrates a moved target cleanly; merge is refused on a changed main
   const m2 = c.take(card('merge'));
   assert.deepEqual([m2.card.sha, m2.card.target], [headOf(wt), headOf(w.repo)]);
   const runHead = headOf(wt);
+  const target2 = headOf(w.repo);
   const md = ok(decide(w, 'sa', 'merge', { cwd: wt }));
-  assert.equal(md.phase, 'MERGED');
+  assert.deepEqual([md.decision, md.phase], ['merge_approved', 'WRAP'], 'decide records the approval; it does not merge');
+  const ma = last(w, id, 'merge_approved');
+  assert.deepEqual([ma.data.sha, ma.data.target, ma.data.pins.length], [runHead, branch, 2]);
+  // Dry run 2: the conductor is still inside the worktree, so no git merge has run; it leaves first.
+  // exit_worktree: from inside it is refused and reissued; from outside next verifies it.
+  writeFileSync(join(wt, 'leftover.txt'), 'untracked\n'); // git worktree remove (no --force) refuses
+  commitIn(w.repo, 'main3.txt', 'pending\n', 'main moves while the merge is pending');
+  const ex = c.take(byKind('exit_worktree'));
+  assert.equal(ex.path, wt);
+  assert.deepEqual(c.next().steps, [], 'nothing else is due while the approval is pending: no new merge card');
+  assert.equal(isAncestorIn(wt, headOf(w.repo), 'HEAD'), false, 'the moved target is not integrated while pending');
+  fails(c.done(ex.step_id), 'MISSING_EVIDENCE', /still inside the worktree/);
+  assert.equal(commands(w, id).some((e) => e.kind === 'check_ran' && e.data.check === 'git.merged'), false, 'no git merge from inside the worktree');
+  assert.equal(isAncestorIn(w.repo, runHead, 'HEAD'), false, 'not merged');
+  // main moved while the merge was pending: refused before any git merge (that target was never
+  // integrated or tested); the next round integrates it, re-runs the checks and the card comes back.
+  const moved = headOf(w.repo);
+  const merges = (): any[] => commands(w, id).filter((e) => e.kind === 'check_ran' && e.data.check === 'git.merged');
+  c.cwd = w.repo; // ExitWorktree
+  assert.deepEqual(c.wrapChecks().map((x) => x.passed), [true, true], 'the moved target is integrated and the checks re-run');
+  const sx = stateOf(w, id);
+  assert.deepEqual(Object.values(sx.steps).filter((st: any) => st.kind === 'exit_worktree').map((st: any) => st.state), ['reissued', 'verified'], 'the reissued exit_worktree, verified from outside');
+  const g1 = merges().at(-1);
+  assert.deepEqual([g1.data.exit_code, g1.data.command], [1, undefined], 'refused before git merge ran');
+  assert.equal(g1.data.error, `${branch} moved since the merge card (card ${target2.slice(0, 12)}, now ${moved.slice(0, 12)}): it was not integrated and tested`);
+  assert.equal(headOf(w.repo), moved, 'nothing merged');
+  assert.equal(isAncestorIn(wt, moved, 'HEAD'), true, 'integrated after the refusal');
+  const m3 = c.take(card('merge'));
+  assert.deepEqual([m3.card.sha, m3.card.target, m3.card.commands[0]], [headOf(wt), moved, '/factory merge']);
+  assert.ok(m3.card.reason.endsWith(`the last git merge failed and was aborted: ${g1.data.error}`), m3.card.reason);
+  // Approved again; the main checkout leaves the approved branch before next: refused, the card comes back.
+  assert.equal(ok(decide(w, 'sa', 'merge', { cwd: w.repo })).phase, 'WRAP');
+  git(w.repo, 'checkout', '-q', '-b', 'elsewhere');
+  const m4 = c.take(card('merge'));
+  const g2 = merges().at(-1);
+  assert.deepEqual([g2.data.exit_code, g2.data.command, g2.data.error], [1, undefined, `the main checkout is on elsewhere, not the approved ${branch}`]);
+  assert.match(m4.card.reason, new RegExp(`the last git merge failed and was aborted: the main checkout is on elsewhere, not the approved ${branch}$`));
+  assert.equal(headOf(w.repo), moved, 'nothing merged');
+  git(w.repo, 'checkout', '-q', branch);
+  // The retry, from the main checkout: merged at once, the latest approval's commit.
+  const runHead2 = headOf(wt);
+  assert.equal(ok(decide(w, 'sa', 'merge', { cwd: w.repo })).phase, 'WRAP');
+  assert.equal(last(w, id, 'merge_approved').data.sha, runHead2);
+  const fin = c.next();
   // The main checkout's branch holds the run branch, through a merge commit.
   assert.equal(git(w.repo, 'merge-base', '--is-ancestor', runHead, 'HEAD'), '');
   assert.equal(git(w.repo, 'rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ').length, 3, 'a --no-ff merge commit');
+  assert.equal(git(w.repo, 'rev-parse', 'HEAD^2').trim(), runHead2, "the latest approval's commit was merged");
   assert.equal(readFileSync(join(w.repo, 'footer.js'), 'utf8'), '1\n');
-  const ma = last(w, id, 'merge_approved');
-  assert.deepEqual([ma.data.sha, ma.data.target, ma.data.pins.length], [runHead, branch, 2]);
   const gm = last(w, id, 'check_ran');
-  assert.deepEqual([gm.data.check, gm.data.exit_code], ['git.merged', 0]);
+  assert.deepEqual([gm.data.check, gm.data.exit_code, gm.data.error, gm.data.command], ['git.merged', 0, undefined, `git merge --no-ff ${runHead2} (factory/${id})`]);
   assert.deepEqual(last(w, id, 'merged').data, { sha: headOf(w.repo), target: branch });
-  // exit_worktree: from inside it is refused and reissued; from outside next verifies it.
-  writeFileSync(join(wt, 'leftover.txt'), 'untracked\n'); // git worktree remove (no --force) refuses
-  const ex = c.take(byKind('exit_worktree'));
-  assert.equal(ex.path, wt);
-  fails(c.done(ex.step_id), 'MISSING_EVIDENCE', /still inside the worktree/);
-  c.cwd = w.repo; // ExitWorktree
-  const fin = c.next();
   assert.equal(fin.done, true);
+  assert.deepEqual([fin.merged, fin.target], [headOf(w.repo), branch]);
   assert.equal(fin.worktree_removed, false);
   assert.match(fin.worktree_error, /untracked|modified/);
   const s = stateOf(w, id);
@@ -1244,11 +1282,13 @@ test('WRAP: a conflicting target blocks the card with the files; the human resol
   assert.equal(stateOf(w, id).steps[m1.step_id].state, 'verified', 'the stale card is closed');
   const m2 = c.take(card('merge'));
   assert.deepEqual([m2.card.commands[0], m2.card.sha], ['/factory merge', headOf(wt)]);
-  assert.equal(ok(decide(w, 'sa', 'merge', { cwd: wt })).phase, 'MERGED');
-  assert.equal(readFileSync(join(w.repo, 'footer.js'), 'utf8'), 'run footer\nmain footer\n');
+  assert.equal(ok(decide(w, 'sa', 'merge', { cwd: wt })).phase, 'WRAP');
+  // Already outside the worktree when next runs (dry run 2): no exit_worktree, next merges at once.
   c.cwd = w.repo;
   const fin = c.next();
   assert.deepEqual([fin.done, fin.worktree_removed], [true, true]);
+  assert.equal(readFileSync(join(w.repo, 'footer.js'), 'utf8'), 'run footer\nmain footer\n');
+  assert.equal(commands(w, id).some((e) => e.kind === 'step_issued' && e.data.kind === 'exit_worktree'), false, 'no exit_worktree');
   assert.equal(existsSync(wt), false);
   assert.deepEqual(stateOf(w, id).rejected, []);
 });
@@ -1288,15 +1328,16 @@ test('acceptance: builder → test → FINDINGS → builder resume → test → 
   assert.match(m.card.reason, /S1 add a footer · reviewer-code APPROVE · 1 round · [0-9a-f]{12} into /);
   assert.match(m.card.reason, /2 files changed[\s\S]*contract\.test passed/);
   const runHead = headOf(wt);
-  assert.equal(ok(decide(w, s, 'merge', { cwd: wt })).phase, 'MERGED');
-  assert.equal(git(w.repo, 'merge-base', '--is-ancestor', runHead, branch), '');
-  // exit_worktree, then housekeeping from outside.
+  assert.equal(ok(decide(w, s, 'merge', { cwd: wt })).phase, 'WRAP');
+  // exit_worktree before the merge (dry run 2), then the merge and housekeeping from outside.
   const ex = c.take(byKind('exit_worktree'));
+  assert.equal(isAncestorIn(w.repo, runHead, branch), false, 'no git merge from inside the worktree');
   c.cwd = w.repo; // ExitWorktree(keep)
   assert.equal(ok(c.done(ex.step_id)).state, 'verified');
   appendFileSync(join(w.projects, '-repo', `${s}.jsonl`), JSON.stringify({ type: 'assistant', sessionId: s, message: { content: `the token ${SECRET}` } }) + '\n');
   const fin = c.next();
   assert.deepEqual([fin.done, fin.worktree_removed, fin.devserver_stopped], [true, true, true]);
+  assert.equal(git(w.repo, 'merge-base', '--is-ancestor', runHead, branch), '');
   const s2 = stateOf(w, id);
   assert.equal(s2.phase, 'COMPLETED');
   assert.ok(git(w.repo, 'log', '--format=%s', branch).includes(`factory: merge factory/${id}`));
@@ -1349,7 +1390,7 @@ test('acceptance: builder → test → FINDINGS → builder resume → test → 
   assert.equal(lane.live.signal_lost, false);
 });
 
-test('merge: WRAP health restarts the dev server; a card blocked by a changed main checkout refreshes once it is restored; a changed pinned output and a failed git merge are refused, the card still offers the merge, and a retry merges; record --runs', (t) => {
+test('merge: WRAP health restarts the dev server; a card blocked by a changed main checkout refreshes once it is restored; a changed pinned output is refused; a failed git merge (after exit_worktree) is recorded with git\'s redacted error, the card comes back with it, and a retry merges; record --runs', (t) => {
   const w = world();
   const r = toBuild(w, 'sa', t);
   const { id, c, wt } = r;
@@ -1375,30 +1416,45 @@ test('merge: WRAP health restarts the dev server; a card blocked by a changed ma
   fails(decide(w, 'sa', 'merge', { cwd: wt }), 'MISSING_EVIDENCE', /changed since it was verified/);
   assert.equal(stateOf(w, id).steps[m2.step_id].state, 'claimed');
   writeFileSync(rv.output_path, review);
-  // The final git merge fails (the main checkout's pre-merge-commit hook): aborted, recorded, not merged.
+  // The final git merge fails (the main checkout's pre-merge-commit hook, which prints the secret):
+  // aborted, recorded with git's redacted error, not merged.
   const hook = join(w.repo, '.git', 'hooks', 'pre-merge-commit');
-  writeFileSync(hook, '#!/bin/sh\necho no merges today >&2\nexit 1\n', { mode: 0o755 });
+  writeFileSync(hook, `#!/bin/sh\necho no merges today >&2\necho token ${SECRET} >&2\nexit 1\n`, { mode: 0o755 });
   const status = git(w.repo, 'status', '--porcelain=v2');
   const before = headOf(w.repo);
   const f = decide(w, 'sa', 'merge', { cwd: wt });
-  fails(f, 'CHECK_FAILED', /git merge into .* failed and was aborted/);
+  assert.equal(ok(f).phase, 'WRAP');
   assert.equal(consumed(w, f.pid), 'decided');
+  const ex = c.take(byKind('exit_worktree'));
+  c.cwd = w.repo; // ExitWorktree
+  ok(c.done(ex.step_id));
+  const m3 = c.take(card('merge'));
   const gm = last(w, id, 'check_ran');
   assert.deepEqual([gm.data.check, gm.data.exit_code], ['git.merged', 1]);
+  assert.match(gm.data.error, /no merges today\s+token \[REDACTED\]/);
+  assert.ok(!JSON.stringify(commands(w, id)).includes(SECRET), 'the error is redacted');
+  assert.equal(stateOf(w, id).checks.at(-1).error, gm.data.error);
   assert.equal(commands(w, id).some((e) => e.kind === 'merged'), false);
   assert.equal(stateOf(w, id).phase, 'WRAP');
   assert.deepEqual([headOf(w.repo), git(w.repo, 'status', '--porcelain=v2')], [before, status], 'the main checkout is as it was');
-  const m3 = c.take(card('merge'));
   assert.deepEqual(m3.card.commands, ['/factory merge', '/factory rework S1 <note…>', '/factory abandon']);
-  assert.match(m3.card.reason, /the last git merge failed \(exit 1\) and was aborted/);
+  assert.match(m3.card.reason, /the last git merge failed and was aborted: no merges today token \[REDACTED\]( Not committing merge[^·]*)?$/, 'git\'s error on one line, at the end');
+  assert.deepEqual(c.next().steps, [], 'the card is not raised twice');
   rmSync(hook);
   const approved = headOf(wt);
-  assert.equal(ok(decide(w, 'sa', 'merge', { cwd: wt })).phase, 'MERGED');
-  assert.equal(git(w.repo, 'rev-parse', 'HEAD^2').trim(), approved, 'the approved commit was merged');
-  const ex = c.take(byKind('exit_worktree'));
-  c.cwd = w.repo;
-  ok(c.done(ex.step_id));
+  // `/factory merge` is accepted again, but the main checkout changes before next runs the merge: no
+  // git merge, recorded, and the card comes back.
+  assert.equal(ok(decide(w, 'sa', 'merge', { cwd: w.repo })).phase, 'WRAP');
+  writeFileSync(join(w.repo, 'stray.txt'), 'x\n');
+  const m4 = c.take(card('merge'));
+  assert.deepEqual([last(w, id, 'check_ran').data.exit_code, last(w, id, 'check_ran').data.error], [1, 'the main checkout differs from its baseline']);
+  assert.match(m4.card.reason, /the last git merge failed and was aborted: the main checkout differs from its baseline$/);
+  assert.equal(headOf(w.repo), before, 'nothing merged');
+  rmSync(join(w.repo, 'stray.txt'));
+  // Restored: from the main checkout next merges at once.
+  assert.equal(ok(decide(w, 'sa', 'merge', { cwd: w.repo })).phase, 'WRAP');
   assert.equal(c.next().done, true);
+  assert.equal(git(w.repo, 'rev-parse', 'HEAD^2').trim(), approved, 'the approved commit was merged');
   assert.equal(stateOf(w, id).phase, 'COMPLETED');
   // factory record through the CLI: --runs names the run; an empty list is refused.
   const rec = ok(run(w, ['record', 'again', '--runs', id, '--session', 'sa']));
@@ -1911,7 +1967,7 @@ test('acceptance (3-3): with a design, the slicer plans S1 [ui, input] and S2 �
   assert.deepEqual(c.wrapChecks().map((x) => [x.name, x.passed]), [['contract.health', true], ['contract.test', true]]);
   const m = c.take(card('merge'));
   assert.match(m.card.reason, /^S1 Signup form · reviewer-code APPROVE, reviewer-security APPROVE, reviewer-ux APPROVE, reviewer-a11y APPROVE, reviewer-ui APPROVE · 1 round · S2 Welcome mail · reviewer-code APPROVE · 0 rounds · /);
-  assert.equal(ok(decide(w, s, 'merge', { cwd: wt })).phase, 'MERGED');
+  assert.equal(ok(decide(w, s, 'merge', { cwd: wt })).phase, 'WRAP');
   assert.deepEqual(last(w, id, 'merge_approved').data.pins.map((p: any) => p.path), [r.sw.output_path, ...[code1, n3.steps[0], ux2, a11y1, ui1, n4.steps[0]].map((st) => st.output_path)]);
   // The board: each slice card carries its tags and roster.
   const cmds = commands(w, id);
@@ -2531,21 +2587,30 @@ test('parallel (5-1): two runs in one repo, interleaved to run_completed, on the
 
   // A merges and completes. Its run_completed cannot be appended at first: its claims stay.
   const [A, B] = runs;
-  assert.equal(ok(decide(w, A.s, 'merge', { cwd: A.wt })).phase, 'MERGED');
+  assert.equal(ok(decide(w, A.s, 'merge', { cwd: A.wt })).phase, 'WRAP');
   const exA = A.c.take(byKind('exit_worktree'));
   A.c.cwd = w.repo;
   ok(A.c.done(exA.step_id));
   const portA = join(w.home, 'ports', String(ports[0]));
+  let mergeHead: string | undefined;
   if (process.getuid?.() !== 0) {
+    // The git merge runs, but its check_ran and merged cannot be appended: the next round merges
+    // again (a no-op: the approved commit is already in HEAD) and records it.
     const log = join(runDir(w, A.id), 'commands.jsonl');
     chmodSync(log, 0o444);
     assert.notEqual(run(w, ['next', '--session', A.s]).code, 0, 'the append fails');
     chmodSync(log, 0o644);
-    assert.equal(stateOf(w, A.id).phase, 'MERGED');
+    assert.equal(stateOf(w, A.id).phase, 'WRAP');
+    assert.equal(git(w.repo, 'merge-base', '--is-ancestor', `factory/${A.id}`, 'HEAD'), '', 'merged in git');
     assert.equal(existsSync(portA), true, 'not released before run_completed is on disk');
+    mergeHead = headOf(w.repo);
   }
   const finA = A.c.next();
   assert.equal(finA.done, true);
+  if (mergeHead) {
+    assert.equal(headOf(w.repo), mergeHead, 'the repeat merged nothing new');
+    assert.equal(last(w, A.id, 'merged').data.sha, mergeHead);
+  }
   assert.equal(last(w, A.id, 'run_completed').kind, 'run_completed');
   assert.equal(existsSync(portA), false, 'released once the fold is terminal');
   assert.equal(existsSync(join(w.home, 'ports', String(ports[1]))), true, "B's port is still B's");
@@ -2553,7 +2618,7 @@ test('parallel (5-1): two runs in one repo, interleaved to run_completed, on the
   // B: its card is stale (the target moved with A's merge); fresh checks on the integrated head, then merge.
   assert.deepEqual(B.c.wrapChecks().map((x) => x.passed), [true, true]);
   B.c.take(card('merge'));
-  assert.equal(ok(decide(w, B.s, 'merge', { cwd: B.wt })).phase, 'MERGED');
+  assert.equal(ok(decide(w, B.s, 'merge', { cwd: B.wt })).phase, 'WRAP');
   const exB = B.c.take(byKind('exit_worktree'));
   B.c.cwd = w.repo;
   ok(B.c.done(exB.step_id));
@@ -2789,7 +2854,7 @@ function wholeRun(w: World, s: string, t: TestContext, green: boolean) {
         writeFileSync(join(wt, 'todo.js'), "module.exports = ['buy milk'];\n");
         ok(c.agent(st, builderOut('Added the todo list'), 'ag-builder'));
       } else if (role?.startsWith('reviewer-')) ok(c.agent(st, approveOut(), `ag-${role}`));
-      else if (st.kind === 'ask_human' && st.card.type === 'merge') assert.equal(ok(decide(w, s, 'merge', { cwd: wt })).phase, 'MERGED');
+      else if (st.kind === 'ask_human' && st.card.type === 'merge') assert.equal(ok(decide(w, s, 'merge', { cwd: wt })).phase, 'WRAP');
       else if (st.kind === 'exit_worktree') { c.cwd = undefined; ok(c.done(st.step_id)); }
       else assert.fail(`unexpected step ${JSON.stringify(st)}`);
     }

@@ -498,6 +498,21 @@ export const wrapBaseline = (s: RunState, head: string, afterSeq: number): Check
 export const openMergeCard = (s: RunState): Step | undefined =>
   openSteps(s).find((st) => st.kind === 'ask_human' && st.card?.type === 'merge');
 
+// An approved merge the CLI has not run yet (dry run 2): WRAP, merge_approved, and no git.merged
+// check after the last merge_approved. A failed git.merged ends it (the card comes back); only a
+// successful one (then `merged`) spends the approval.
+export function mergePending(s: RunState, commands: readonly AnyEvent[]): boolean {
+  if (s.phase !== 'WRAP' || !s.merge_approved) return false;
+  const at = commands.findLastIndex((e) => e.kind === 'merge_approved');
+  return at >= 0 && !commands.slice(at + 1).some((e) => e.kind === 'check_ran' && (e as Envelope<'check_ran'>).data.check === 'git.merged');
+}
+
+// The approved commit and target branch of the last merge_approved.
+export function approvedMerge(commands: readonly AnyEvent[]): { sha?: string; target?: string } {
+  const e = commands.findLast((x) => x.kind === 'merge_approved') as Envelope<'merge_approved'> | undefined;
+  return { sha: e?.data.sha, target: e?.data.target };
+}
+
 export type MergeEvidence = { ok: true; card: Step; evidence: string[] } | { ok: false; reason: string };
 
 // Merge (AD-7, AD-8): an open merge card that offers the merge, pinned to the run branch head and

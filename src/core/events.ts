@@ -117,6 +117,8 @@ export interface DataByKind {
   check_ran: {
     check: Check; exit_code: number; duration_ms: number; basis_seq: number;
     command?: string; sha?: string; dirty?: boolean; digest?: string;
+    // Dry run 2, additive: a failed git.merged keeps git's (redacted) error text.
+    error?: string;
   };
   ask_raised: { card: Card; step_id?: string; slice?: string; escalation?: string };
   slice_started: { slice: string };

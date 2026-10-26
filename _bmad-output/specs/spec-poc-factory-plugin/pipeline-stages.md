@@ -11,7 +11,9 @@ One pipeline; forks only at orientation. Flow diagram: `architecture-diagrams.md
 | SPEC ∥ DESIGN | worktree | Spec (one screen) and `design.md` in parallel; designer runs if app has a UI surface and task not marked UI-free | `spec.md`, `design.md` | **Gate 1** (spec + design) |
 | SLICE PLAN | worktree | Slices with reviewer tags and independent/dependent mark | Slice plan | **Gate 2** |
 | BUILD LOOP | worktree | Per slice: builder ⇄ reviewers; pipelined for independent slices, serial for dependent | Code + verdict files | Escalations only |
-| WRAP | worktree → target | Summary, conflict resolution, re-verify, transcript snapshot+redact | PR or local merge | **Human merge OK** |
+| WRAP | worktree → main checkout | Summary, conflict resolution, re-verify; after merge OK the conductor leaves the worktree, then the factory merges; transcript snapshot+redact | PR or local merge | **Human merge OK** |
+
+WRAP order: `/factory merge` records the approval only. The conductor then leaves the worktree, and the factory merges from the main checkout (the sandbox lets a command write only under the session's current directory), records the result, removes the worktree and completes the run. A failed merge is aborted and recorded with git's error; the merge card comes back with that error, and `/factory merge` retries.
 
 Greenfield: `/factory` in a non-git directory runs `git init` plus an empty initial commit before the run is claimed; project files are created only in the worktree.
 

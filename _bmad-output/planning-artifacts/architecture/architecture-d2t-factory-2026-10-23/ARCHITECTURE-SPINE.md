@@ -121,7 +121,7 @@ flowchart BT
   - **Command kinds:** `run_started`, `session_bound`, `stage_started`, `stage_completed`, `step_issued`, `step_claimed`, `step_reported`, `step_verified`, `step_reissued`, `check_ran`, `ask_raised`, `slice_started`, `slice_closed`, `merged`, `run_completed`.
   - **Decision kinds** (also commands; `actor: human`): `intake_confirmed`, `gate_1_passed`, `gate_2_passed`, `rework_requested`, `escalation_ruled`, `design_choice_made`, `cut_decided`, `stage_rerun_requested`, `merge_approved`, `run_abandoned`.
   - **Fact kinds:** `human_prompt`, `prompt_text`, `session_started`, `session_ended`, `subagent_started`, `subagent_stopped`, `tool_succeeded`, `tool_failed`, `output_written`.
-  - `check_ran.data` = `{check: contract.test|contract.health|git.baseline|git.worktree_clean|git.deps|git.merged|spec.lint|plan.lint|devserver, command?, exit_code, duration_ms, sha?, dirty?, basis_seq}`.
+  - `check_ran.data` = `{check: contract.test|contract.health|git.baseline|git.worktree_clean|git.deps|git.merged|spec.lint|plan.lint|devserver, command?, exit_code, duration_ms, sha?, dirty?, basis_seq, error?}`. `error` (additive, dry run 2): a failed `git.merged` keeps git's redacted error text.
   - A **claim** is `step_reported` with `actor: conductor`.
 
 ### AD-6 — Human decisions come only from typed `/factory` commands
@@ -169,7 +169,8 @@ flowchart BT
     | Intake, rework, ruling, design choice, cut, rerun, abandon | Consumed `human_prompt` (AD-6) |
     | Gate 1 | `human_prompt` + `check_ran spec.lint` + verified `design` step when required (AD-27) |
     | Gate 2 | `human_prompt` + `check_ran plan.lint` |
-    | Merged | `human_prompt` + `check_ran git.merged` |
+    | Merge approved | `human_prompt` + the merge evidence (AD-8) |
+    | Merged | `merge_approved` + `check_ran git.merged` (exit 0), run by `next` after the conductor left the worktree |
 
   - **`step_verified`.** When `next` or `done` observes the evidence, the CLI appends `step_verified{step_id, evidence:[fact ids]}`. Only `step_verified` unblocks dependent steps.
   - **Supporting facts.** A `tool_succeeded` from a test the builder ran itself is shown as supporting, never as verified.
@@ -197,7 +198,7 @@ flowchart BT
     - At slice close, `git.deps` diffs manifests and lockfiles. Any change raises a `New dependency:` escalation.
     - **SCAFFOLD repair.** A failed SCAFFOLD check resumes the scaffolder once (`SCAFFOLD_REPAIR_ROUNDS`) with a repair brief (`review-policy.md` SCAFFOLD repair) before `scaffold_failure` is raised; the card lists both rounds. An `ESCALATE` from the scaffolder raises it at once. `paths.ts` adds `runs/<run-id>/cache/`, exported to every contract command as `FACTORY_CACHE_DIR`.
   - **Git.** Every git operation lives in the CLI: baseline, worktree add, the per-step commits (AD-30), merge, and PR via `gh`.
-  - **Merge.** After `merge_approved`, the CLI performs the merge. A conflict issues a builder step, and the CLI re-runs test plus `reviewer-code` before raising MERGE again.
+  - **Merge.** `decide` records `merge_approved` and does not merge. While that approval is pending (no `git.merged` after the last `merge_approved`), `next` integrates nothing and raises no merge card; a conductor inside the worktree is issued `exit_worktree` first, because the sandbox lets a command write only under the session's cwd. Once the conductor is outside the worktree and nothing is open, `next` (holder only, unlocked) merges the approved commit of the last `merge_approved`. An approved commit already in the main checkout's HEAD counts as merged (a round whose merge was not appended). Otherwise it re-checks that the main checkout is on the approved branch, that its HEAD is still the target commit the approved merge card was pinned to (a target that moved since was never integrated or tested), and that it equals its baseline; then it runs `git merge --no-ff <approved sha>`. It appends `check_ran git.merged` (`command` only when git merge ran) and, on success, `merged`; then the worktree removal and `run_completed` follow. A failure (a refused re-check, or git's error, conflicts included, redacted into `check_ran.data.error`) is aborted and leaves the run in WRAP: the merge card comes back with the error at the end of its reason (after a fresh integration and fresh checks when the target moved), and `/factory merge` retries. Only a successful merge spends the approval; nothing re-merges without a fresh `/factory merge`. Conflicts with the target are resolved before the card, on the run branch: WRAP's integration reports them on a card without the merge.
 ### AD-9 — Identity: repo, run, branch
 
 - **Binds:** CAP-1, CAP-3, CAP-12, CAP-14
@@ -286,6 +287,7 @@ flowchart BT
 - **Rule:**
   - **Creating it.** The CLI runs `git worktree add <repo>/.claude/worktrees/factory-<run-id> -b factory/<run-id> <base_sha>`. It ensures `.claude/worktrees/` is listed in the untracked `.git/info/exclude`, and copies the gitignored files the run contract names. Only `paths.ts` resolves the location.
   - **Entering it.** The `enter_worktree` step is issued only when the calling CLI's `realpath(cwd)` is outside the run's worktree. The conductor then calls `EnterWorktree` with `path`. The session's cwd survives `/clear`, so this happens once per session.
+  - **Leaving it.** After `merge_approved`, before the merge (AD-8), `exit_worktree` is issued while the calling CLI's cwd is inside the worktree; the conductor calls `ExitWorktree` (keep). The CLI removes the worktree after `merged`. Runs merged by an older CLI got `exit_worktree` after `merged`; that path stays.
   - **Why not `~/.factory` (spike 01).** `EnterWorktree` on a path outside `.claude/worktrees/` prompts every time, whatever the allow rules say, and can't enter a second such worktree from inside one. The in-repo placement entered with zero prompts, both fresh and after `/clear`, and left `git status` clean.
   - **Factory artifacts still live under `~/.factory` (AD-10).** Only the git worktree is in the repo.
   - **Shared mutable service.** If the run contract lists one, the run claims `<repo-hash>/exclusive/` by `mkdir` at SCAFFOLD. `factory start` refuses with `REFUSED_EXCLUSIVE` while the claim is held by a run that isn't terminal.
@@ -566,7 +568,7 @@ flowchart BT
   - **`factory setup`** is idempotent. It:
     - creates `~/.factory` outside the sandbox. A sandbox cannot create a missing directory, even one it allow-lists (spike 03);
     - records the absolute Node path;
-    - merges `~/.factory` into `permissions.additionalDirectories`, the allow rules, the sandbox `allowWrite`, and an `EnterWorktree` allow rule in `~/.claude/settings.json`;
+    - merges `~/.factory` into `permissions.additionalDirectories`, the allow rules, the sandbox `allowWrite`, and an `EnterWorktree` allow rule in `~/.claude/settings.json`. No rule is added for the final git merge: the CLI runs it after the conductor left the worktree, from the main checkout, which is then the session's cwd (AD-8, dry run 2). The factory never bypasses the sandbox;
     - runs `agent-browser install`.
   - **Refusals.** `factory start` refuses with `SETUP_REQUIRED` until setup has run, and also while `plugin-env.json` is missing, with the message "restart the session".
 ## Consistency Conventions
@@ -642,8 +644,9 @@ stateDiagram-v2
   SLICE_PLAN --> SLICE_PLAN: rework_requested
   BUILD --> BUILD: cut_decided
   BUILD --> WRAP: stage_completed
-  WRAP --> WRAP: merge conflict, builder step
-  WRAP --> MERGED: merge_approved then merged
+  WRAP --> WRAP: integration conflict, card without merge
+  WRAP --> WRAP: merge_approved, exit_worktree if inside it, then a failed git.merged
+  WRAP --> MERGED: merge_approved, exit_worktree if inside it, then merged
   MERGED --> [*]: run_completed
   INTAKE --> ABANDONED: run_abandoned
   ORIENT --> ABANDONED: run_abandoned

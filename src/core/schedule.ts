@@ -37,6 +37,8 @@ export interface ScheduleCtx {
   // 3-4: per slice, the builder agent a new round of it may resume (spawned under the current session_bound).
   resume_agents?: Record<string, string>;
   wrap?: WrapProbe;
+  // Dry run 2: WRAP with an approved merge the CLI has not run yet (mergePending). No probe then.
+  merge_pending?: boolean;
 }
 
 const NO_CTX: ScheduleCtx = { in_worktree: false, recon_cached: false };
@@ -199,17 +201,33 @@ function build(s: RunState, ctx: ScheduleCtx): DueStep[] {
   return out;
 }
 
+// The note a merge card carries after a failed git merge: git's (redacted) error collapsed to one
+// line, at most MERGE_NOTE_MAX chars. Older logs have no error: the exit code is shown.
+const MERGE_NOTE_MAX = 300;
+function mergeNote(c: { exit_code: number; error?: string }): string {
+  if (c.error === undefined) return `the last git merge failed (exit ${c.exit_code}) and was aborted`;
+  const one = c.error.replace(/\s+/g, ' ').trim();
+  return `the last git merge failed and was aborted: ${one.length > MERGE_NOTE_MAX ? `${one.slice(0, MERGE_NOTE_MAX - 1)}…` : one}`;
+}
+
 // WRAP: health and test at the run branch head, the CLI's inline git.baseline, then the merge card.
 // A conflict or another probe problem goes straight to a card without merge. Any new head (or a
-// moved target) needs fresh checks and a fresh card; the CLI closes the stale one.
+// moved target) needs fresh checks and a fresh card; the CLI closes the stale one. Dry run 2: with
+// an approved merge pending, a conductor inside the worktree leaves it first (the sandbox lets a
+// command write only under the session's cwd, so the CLI merges from the main checkout); outside it,
+// nothing is due: the CLI merges.
 function wrap(s: RunState, ctx: ScheduleCtx): DueStep[] {
+  if (ctx.merge_pending) {
+    if (!ctx.in_worktree || openSteps(s).some((st) => st.kind === 'exit_worktree')) return [];
+    return [{ kind: 'exit_worktree', stage: 'WRAP', attempt: 1 }];
+  }
   const p = ctx.wrap;
   if (!p || openSteps(s).some((st) => st.kind === 'ask_human' && st.card?.type === 'merge')) return [];
   const last = latestStep(s, (st) => st.kind === 'ask_human' && st.card?.type === 'merge' && !isVoided(s, st.id));
   if (last && mergeCardCurrent(s, last, p)) return [];
   // A failed git merge is shown, but the merge stays on offer: decide re-checks everything.
   const failed = last ? s.checks.filter((c) => c.check === 'git.merged' && c.seq > last.issued_seq && c.exit_code !== 0) : [];
-  const notes = failed.length ? [`the last git merge failed (exit ${failed.at(-1)!.exit_code}) and was aborted`] : [];
+  const notes = failed.length ? [mergeNote(failed.at(-1)!)] : [];
   const problems = p.problems;
   const slices = s.slice_order.map((id) => s.slices[id]).filter((sl) => sl.state !== 'CUT').map((sl) => ({
     id: sl.id, title: sl.title, rounds: sl.rounds, verdicts: sliceVerdicts(s, sl.id).map((v) => ({ role: v.role, verdict: v.step?.verdict })),
@@ -235,7 +253,8 @@ function wrap(s: RunState, ctx: ScheduleCtx): DueStep[] {
   return card({ exit_code: checks[1].result!.exit_code }, failing);
 }
 
-// MERGED: a conductor still inside the worktree leaves it first; the CLI then removes it.
+// MERGED: a conductor still inside the worktree leaves it first; the CLI then removes it. Since dry
+// run 2 the conductor leaves before the merge; this covers runs merged by an older CLI.
 function merged(s: RunState, ctx: ScheduleCtx): DueStep[] {
   if (!ctx.in_worktree || openSteps(s).some((st) => st.kind === 'exit_worktree')) return [];
   return [{ kind: 'exit_worktree', stage: 'WRAP', attempt: 1 }];

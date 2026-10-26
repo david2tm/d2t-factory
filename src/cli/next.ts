@@ -15,8 +15,8 @@ import { redact, redactString } from '../core/redact.ts';
 import { isTerminal, openSteps, type RunState, type Step } from '../core/reducer.ts';
 import { due, mergeCardCurrent, type ScheduleCtx, type WrapProbe } from '../core/schedule.ts';
 import {
-  activeScaffoldRepair, askOpenFor, checkById, claimOverlay, classifyOrphan, closeEvidence, isIntakeChat, isVerified, isVoided, latestByRole, latestCheckStep, liveSlices, nextBacklog, openMergeCard,
-  roundFailure, roundOf, scaffoldRepairs, scaffoldRuled, sliceDeps, wrapBaseline, wrapCheck,
+  activeScaffoldRepair, approvedMerge, askOpenFor, checkById, claimOverlay, classifyOrphan, closeEvidence, isIntakeChat, isVerified, isVoided, latestByRole, latestCheckStep, latestStep, liveSlices,
+  mergePending, nextBacklog, openMergeCard, roundFailure, roundOf, scaffoldRepairs, scaffoldRuled, sliceDeps, wrapBaseline, wrapCheck,
 } from '../core/verify.ts';
 import { ulid } from '../store/ids.ts';
 import { loadRun, readRedactValues, type LoadedRun } from '../store/load-run.ts';
@@ -24,6 +24,7 @@ import { withLock } from '../store/locks.ts';
 import { commandsFile, factsDir, lockDir, outFile, realish, reconFile } from '../store/paths.ts';
 import { flagString, type Args } from './args.ts';
 import { writeBrief, writeIntakeBrief } from './brief.ts';
+import { mergedCheck } from './check.ts';
 import { claimPort, refusedExclusive, releaseClaims, scaffoldConflict } from './claims.ts';
 import { appendAll, gateOrThrow, makeEvent, stepView } from './commit.ts';
 import { contractOf, devserverDown } from './devserver.ts';
@@ -126,13 +127,16 @@ function wrapProbe(c: Ctx, state: RunState, integrate: boolean): WrapProbe | und
   return { head: tip, target, branch, diffstat, problems: problems.map((x) => redactString(x, values)) };
 }
 
+// While an approved merge is pending (dry run 2) WRAP is not probed: nothing is integrated into the
+// run branch and no merge card is raised.
 function probe(run: LoadedRun, c: Ctx, cwd: string, holder: boolean): ScheduleCtx {
   const { state } = run;
+  const pending = state.phase === 'WRAP' && mergePending(state, run.commands);
   return {
     in_worktree: inWorktree(cwd, state.worktree),
     recon_cached: state.phase === 'ORIENT' && !state.greenfield && !latestByRole(state, 'recon') && !reconRerun(run) && readCache(c.hash, state.base_sha ?? '') !== null,
     ...(state.phase === 'BUILD' ? { resume_agents: resumeAgents(run) } : {}),
-    ...(state.phase === 'WRAP' ? { wrap: wrapProbe(c, state, holder) } : {}),
+    ...(state.phase === 'WRAP' ? (pending ? { merge_pending: true } : { wrap: wrapProbe(c, state, holder) }) : {}),
   };
 }
 
@@ -395,6 +399,51 @@ function wrapEvents(c: Ctx, run: LoadedRun, ctx: ScheduleCtx): AnyEvent[] {
   return [];
 }
 
+// The approved merge (AD-8, dry run 2), unlocked, by the holder, once the conductor is outside the
+// worktree (the sandbox lets a command write only under the session's cwd) and nothing is open. An
+// approved commit already in the main checkout's HEAD counts as merged (a round whose merge was not
+// appended). Otherwise the main checkout must still be on the approved branch, at the target commit
+// the approved card was pinned to, and equal its baseline; then `git merge --no-ff <approved sha>`
+// into it (the message names the run branch). The approved commit, not the branch ref: nothing that
+// lands on the run branch after the approval is merged. check_ran git.merged records the result
+// (`command` only when git merge ran), with the redacted reason or git error on failure (the card
+// then comes back and `/factory merge` retries); on success merged{sha, target}.
+function mergeApproved(c: Ctx, run: LoadedRun): Prepared {
+  const { state } = run;
+  const approved = approvedMerge(run.commands);
+  const branch = state.branch!;
+  const t0 = Date.now();
+  const into = currentBranch(c.root);
+  let now: string | null = null;
+  try { now = head(c.root); } catch { /* reported below */ }
+  let digest: string | null = null;
+  try { digest = statusDigest(c.root).digest; } catch { /* reported below */ }
+  const card = latestStep(state, (st) => st.kind === 'ask_human' && st.card?.type === 'merge' && !isVoided(state, st.id));
+  const pinned = card?.card?.target ?? null;
+  let error: string | undefined;
+  let sha: string | undefined;
+  let command: string | undefined;
+  if (!approved.sha) error = 'merge_approved names no approved commit';
+  else if (into && now && isAncestor(c.root, approved.sha, now)) sha = now; // already merged
+  else if (!into) error = 'the main checkout is on a detached HEAD';
+  else if (approved.target && into !== approved.target) error = `the main checkout is on ${into}, not the approved ${approved.target}`;
+  else if (!now || now !== pinned) error = `${into} moved since the merge card (card ${pinned?.slice(0, 12) ?? 'none'}, now ${now?.slice(0, 12) ?? 'none'}): it was not integrated and tested`;
+  else if (!digest || digest !== baseline(state)) error = 'the main checkout differs from its baseline';
+  else {
+    command = `git merge --no-ff ${approved.sha} (${branch})`;
+    const m = mergeInto(c.root, approved.sha, `factory: merge ${branch} (${state.task ?? c.runId})`, { noFf: true });
+    if (!m.ok) error = m.error;
+    else if (mergedCheck(c.root, approved.sha).exit_code !== 0) error = `${approved.sha.slice(0, 12)} is not in ${into} after the merge`;
+    else sha = m.sha;
+  }
+  const ran = makeEvent(c.runId, 'check_ran', {
+    check: 'git.merged', exit_code: sha ? 0 : 1, duration_ms: Date.now() - t0, basis_seq: state.seq, ...(command ? { command } : {}),
+    ...(sha ? { sha } : { error: redactString(error ?? 'git merge failed', readRedactValues(c.hash, c.runId)) }),
+  }, { corr: state.run_id! });
+  if (!sha) return { events: [ran] };
+  return { events: [ran, makeEvent(c.runId, 'merged', { sha, target: into! }, { corr: ran.id })], report: { merged: sha, target: into } };
+}
+
 // After `merged`, from outside the worktree: stop the dev server, remove the worktree (a failure is
 // reported, never fatal), then run_completed. The claims are released by `advance` once that append
 // has made the fold terminal (AD-20); the recording follows it.
@@ -473,7 +522,10 @@ async function prepare(c: Ctx, run: LoadedRun, ctx: ScheduleCtx, cwd: string): P
     if (sc && sc.state === 'reported' && sc.output?.status === 'DONE' && !sc.output.failure && !askOpenFor(state, sc.id)) return { events: finishScaffold(c, run, sc) };
   }
   if (state.phase === 'BUILD') return { events: buildEvents(c, run) };
-  if (state.phase === 'WRAP') return { events: wrapEvents(c, run, ctx) };
+  if (state.phase === 'WRAP') {
+    if (ctx.merge_pending) return ctx.in_worktree || openSteps(state).length ? { events: [] } : mergeApproved(c, run);
+    return { events: wrapEvents(c, run, ctx) };
+  }
   if (state.phase === 'MERGED') return housekeeping(c, run, ctx);
   return { events: [] };
 }

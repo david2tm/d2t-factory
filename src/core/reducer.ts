@@ -68,7 +68,7 @@ export interface RunState {
   step_order: string[];
   slices: Record<string, Slice>;
   slice_order: string[];
-  checks: { id: string; check: string; exit_code: number; sha?: string; basis_seq: number; seq: number; digest?: string }[];
+  checks: { id: string; check: string; exit_code: number; sha?: string; basis_seq: number; seq: number; digest?: string; error?: string }[];
   asks: Record<string, Ask>;
   voided: string[];
   cut_decided: boolean;
@@ -256,7 +256,11 @@ function step(s: RunState, e: AnyEvent): Reason {
     }
 
     case 'check_ran':
-      s.checks.push({ id: e.id, check: e.data.check, exit_code: e.data.exit_code, sha: e.data.sha, basis_seq: e.data.basis_seq, seq: s.seq, digest: e.data.digest });
+      // `error` only when present (dry run 2), so older folds are unchanged.
+      s.checks.push({
+        id: e.id, check: e.data.check, exit_code: e.data.exit_code, sha: e.data.sha, basis_seq: e.data.basis_seq, seq: s.seq, digest: e.data.digest,
+        ...(typeof e.data.error === 'string' ? { error: e.data.error } : {}),
+      });
       return null;
 
     case 'ask_raised': {
