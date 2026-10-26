@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { logTail } from '../src/cli/next.ts';
+import { WAIT_MAX_MS } from '../src/core/config.ts';
 import { validateEvent } from '../src/core/events.ts';
 import { projectRun } from '../src/core/projection.ts';
 import { fold } from '../src/core/reducer.ts';
@@ -470,6 +471,28 @@ function toChecks(w: World, s: string, t: TestContext, o: Record<string, unknown
   const d = ok(r.c.agent(sc, scaffoldOut(contract(r.port, { start: 'sleep 30', health: 'true', ...o })), 'ag-scaffold'));
   return { ...r, sc, d };
 }
+
+test('claim waiting (6-3): a scaffolder waiting on its checks is CLAIMED · checks running with no overdue_at, and next sets no wait deadline from it', (t) => {
+  const w = world();
+  const { id, c, sc } = toChecks(w, 'sa', t);
+  const install = c.take(byKind('run_check'));
+  assert.equal(install.check, 'contract.install');
+  // In flight: the scaffolder (reported) and its install (claimed). Before 6-3 the scaffolder's claim
+  // set a 30 s deadline; now only claims waiting on nothing but hook facts do.
+  const n = c.next();
+  assert.deepEqual([n.steps, [...n.in_flight].sort()], [[], [sc.step_id, install.step_id].sort()]);
+  assert.equal(n.wait.retry_after_ms, WAIT_MAX_MS);
+  const cmds = commands(w, id);
+  const lane = projectRun({ state: fold(cmds), commands: cmds, facts: [], skipped: [] }, { repo_hash: 'h', run_id: id });
+  const claim = lane.cards.find((x) => x.id === 'stage:SCAFFOLD')!.claims.find((x) => x.step_id === sc.step_id)!;
+  assert.deepEqual([claim.state, claim.waiting_on, claim.waiting_for, claim.overdue_at], ['claimed', 'checks', 'install, health, test', null]);
+  assert.equal(lane.deadlines.overdue_at, null);
+  // Once install passed, health and test are what it waits on.
+  c.check(install.step_id);
+  const cmds2 = commands(w, id);
+  const lane2 = projectRun({ state: fold(cmds2), commands: cmds2, facts: [], skipped: [] }, { repo_hash: 'h', run_id: id });
+  assert.equal(lane2.cards.find((x) => x.id === 'stage:SCAFFOLD')!.claims.find((x) => x.step_id === sc.step_id)!.waiting_for, 'health, test');
+});
 
 test('SCAFFOLD done: a tracked file changed in the worktree raises scaffold_failure', (t) => {
   const w = world();
@@ -1340,6 +1363,61 @@ test('acceptance (3-2): brownfield with a UI surface: one next issues the spec-w
   const bb = readFileSync(b1.brief_path, 'utf8');
   assert.ok(bb.includes(`the approved spec (pinned at gate 1): ${sw.output_path}`) && bb.includes(`the approved design (pinned at gate 1): ${ds.output_path}`), bb);
   ok(decide(w, s, 'abandon', { cwd: wt }));
+});
+
+test('acceptance (6-3): through gate 2 with a design, the lane shows the intake, spec, design and plan artifacts, each pinned_by its gate decision; each gate card names its files; a secret in the spec is [REDACTED] in its body at the reported sha256, and no recorded file holds it', (t) => {
+  const w = world();
+  const s = 'sa';
+  const r = toSpecDesign(w, s, t);
+  const { id, c, wt } = r;
+  const laneNow = () => { const cmds = commands(w, id); return projectRun({ state: fold(cmds), commands: cmds, facts: [], skipped: [] }, { repo_hash: 'h', run_id: id }); };
+  const named = (l: any): string[] => (l.artifacts ?? []).map((a: any) => a.name);
+  const steps = c.next().steps;
+  const sw = steps.find(byKind('spawn', 'spec-writer'));
+  const ds = steps.find(byKind('spawn', 'designer'));
+  c.claim(sw.step_id);
+  c.claim(ds.step_id);
+  const spec = `${specOut('Footer')}Use API_TOKEN=${SECRET} from .env\n`;
+  assert.equal(ok(c.agent(sw, spec, 'ag-spec')).state, 'verified');
+  // The designer's stop lands after its done: next verifies it (the async-facts path), embedding too.
+  agentWrites(w, s, ds, designOut(), 'ag-design');
+  assert.equal(ok(c.done(ds.step_id)).state, 'reported');
+  agentStops(w, s, ds.agent, 'ag-design');
+  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['spec.lint', true]]);
+  assert.equal(commands(w, id).find((e) => e.kind === 'step_verified' && e.data.step_id === ds.step_id).data.artifact.body, designOut());
+  const g1 = c.take(card('gate_1'));
+  const at1 = laneNow();
+  assert.deepEqual(named(at1), ['intake.md', 'spec.md', 'design.md']);
+  const byName = (l: any, n: string): any => l.artifacts.find((a: any) => a.name === n);
+  assert.deepEqual(at1.needs_you.find((x) => x.ask_id === g1.step_id)!.files, [byName(at1, 'spec.md').id, byName(at1, 'design.md').id]);
+  assert.equal(byName(at1, 'spec.md').pinned_by, null, 'not yet approved');
+  ok(decide(w, s, 'approve gate1', { cwd: wt }));
+  const sl = c.plan();
+  const g2 = c.take(card('gate_2'));
+  const at2 = laneNow();
+  assert.deepEqual(at2.needs_you.find((x) => x.ask_id === g2.step_id)!.files, [byName(at2, 'spec.md').id, byName(at2, 'plan.md').id]);
+  assert.equal(ok(decide(w, s, 'approve gate2', { cwd: wt })).phase, 'BUILD');
+
+  const lane = laneNow();
+  const kind = (d: string | null): string | null => lane.decisions.find((x) => x.id === d)?.kind ?? null;
+  assert.deepEqual(lane.artifacts!.map((a) => [a.name, a.stage, kind(a.pinned_by), a.superseded, a.truncated]), [
+    ['intake.md', 'INTAKE', 'intake_confirmed', false, false], ['spec.md', 'SPEC', 'gate_1_passed', false, false],
+    ['design.md', 'DESIGN', 'gate_1_passed', false, false], ['plan.md', 'SLICE_PLAN', 'gate_2_passed', false, false],
+  ]);
+  const reportedSha = (step: string): string => commands(w, id).find((e) => e.kind === 'step_reported' && e.data.step_id === step).data.output.sha256;
+  const a = byName(lane, 'spec.md');
+  assert.deepEqual([a.step_id, a.path, a.sha256], [sw.step_id, sw.output_path, sha(spec)]);
+  assert.equal(a.sha256, reportedSha(sw.step_id), 'the sha256 the gates pin');
+  assert.equal(a.body, spec.replace(SECRET, '[REDACTED]'));
+  assert.equal(byName(lane, 'plan.md').step_id, sl.step_id);
+  assert.equal(byName(lane, 'intake.md').sha256, last(w, id, 'intake_confirmed').data.pins[0].sha256);
+  for (const e of commands(w, id)) assert.ok(validateEvent(e).ok, JSON.stringify(e));
+  assert.ok(!readFileSync(join(runDir(w, id), 'commands.jsonl'), 'utf8').includes(SECRET), 'no secret in the log');
+  ok(run(w, ['record', 'gate2', '--runs', id, '--session', s]));
+  const rec = join(w.home, 'recordings', 'gate2');
+  const files = (readdirSync(rec, { recursive: true }) as string[]).filter((f) => statSync(join(rec, f)).isFile());
+  assert.ok(files.some((f) => f.endsWith('commands.jsonl')), files.join('\n'));
+  for (const f of files) assert.ok(!readFileSync(join(rec, f), 'utf8').includes(SECRET), `${f} leaks the secret`);
 });
 
 test('acceptance (3-2): invent mode asks one question; /factory choose b (default a) voids the design, a second designer gets option b and the previous design, and a question in its output is rejected', (t) => {

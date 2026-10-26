@@ -2,11 +2,15 @@
   // The Evidence drawer, docked right (the board narrows; it never overlays cards). Claim variant:
   // the proof table and the CLAIMED → VERIFIED chain. Decision variant: event (the AD-5 kind),
   // reason, decided by, at, terminal response (prompt_text verbatim), run / stage, evidence.
-  // `×` or Esc closes it and focus returns to the source.
+  // Artifact variant (6-3): path with Copy path, sha256, pinned by, and the redacted body its
+  // step_verified embedded (never a file read), read-only. `×` or Esc closes it and focus returns to
+  // the source.
   import { tick } from 'svelte';
-  import { closeDrawer, type Selection } from '../lib/drawer.ts';
-  import { CHIP_WORD, chipState, decider, displayName, eventName, laneKey, sealLine, shortLabel } from '../lib/model.ts';
+  import { copyText } from '../lib/copy.ts';
+  import { closeDrawer, openDrawer, srcId, type Selection } from '../lib/drawer.ts';
+  import { artifactFor, CHIP_WORD, chipState, decider, displayName, eventName, laneKey, pinnedLine, proofRow, sealLine, shortLabel, shortSha } from '../lib/model.ts';
   import type { Claim, EvidenceRow, Lane } from '../lib/types.ts';
+  import ArtifactButton from './ArtifactButton.svelte';
   import ClaimChip from './ClaimChip.svelte';
   import Glyph from './Glyph.svelte';
 
@@ -16,7 +20,24 @@
   const card = $derived(lane?.cards.find((c) => c.id === sel.card) ?? null);
   const claim = $derived(sel.kind === 'claim' ? (card?.claims.find((c) => c.step_id === sel.step) ?? null) : null);
   const decision = $derived(sel.kind === 'decision' ? (lane?.decisions.find((d) => d.id === sel.decision) ?? null) : null);
-  const gone = $derived(!lane || !card || (sel.kind === 'claim' ? !claim : !decision));
+  const artifact = $derived(sel.kind === 'artifact' && lane ? artifactFor(lane, sel.artifact) : null);
+  const gone = $derived(!lane || (sel.kind === 'artifact' ? !artifact : !card || (sel.kind === 'claim' ? !claim : !decision)));
+
+  // Copy path (6-3): the check glyph for a moment on success; on failure the path is selected.
+  let pathEl: HTMLElement | undefined = $state();
+  let copied = $state(false);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  async function copyPath(path: string): Promise<void> {
+    if (!(await copyText(path, pathEl, 'Copy failed — path selected'))) return;
+    copied = true;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { copied = false; }, 1500);
+  }
+  // The decision that pinned the artifact opens in this drawer, from the card it sealed.
+  function openPin(id: string): void {
+    const c = lane?.cards.find((x) => x.seals.includes(id));
+    if (c) openDrawer({ kind: 'decision', lane: sel.lane, card: c.id, decision: id, deck: false, src: sel.src });
+  }
 
   let heading: HTMLElement | undefined = $state();
   // Focus moves into the drawer when it opens or swaps content.
@@ -54,6 +75,8 @@
       <h3 tabindex="-1" bind:this={heading}>Evidence · {shortLabel(card)} {displayName(claim.role)} · <span class="st {st}">{CHIP_WORD[st]}</span></h3>
     {:else if decision && lane}
       <h3 tabindex="-1" bind:this={heading}>Decision · {eventName(decision)} · {lane.run_id}</h3>
+    {:else if artifact && lane}
+      <h3 tabindex="-1" bind:this={heading}>Artifact · {artifact.name} · {lane.run_id}</h3>
     {/if}
   </div>
 
@@ -69,6 +92,8 @@
           {#if st === 'verified'}{check ? `An evidence check confirmed ${who}'s claim.` : `A hook fact matched ${who}'s claim.`}
           {:else if st === 'unverified'}No hook fact or evidence check confirmed {who}'s claim in time.
           {:else if st === 'superseded'}This claim was voided by a later decision.
+          {:else if claim.waiting_on === 'human'}{who} says so. It waits on Master d2t.
+          {:else if claim.waiting_on === 'checks'}{who} says so. The CLI's checks are running.
           {:else}{who} says so. No hook fact or evidence check yet.{/if}
         </span>
       </div>
@@ -88,7 +113,7 @@
           </dl>
         {/each}
       {:else}
-        <dl class="fact"><dt>proof</dt><dd>{st === 'unverified' ? 'no hook fact' : 'none yet'}</dd></dl>
+        <dl class="fact"><dt>proof</dt><dd>{proofRow(claim, st)}</dd></dl>
       {/if}
     </section>
 
@@ -129,8 +154,11 @@
           {#if decision.evidence.length === 0}none required{/if}
           {#each decision.evidence as id (id)}
             {@const ev = evidenceOf(id)}
+            {@const art = artifactFor(lane, id)}
             {#if ev}
-              <span class="evrow">{displayName(ev.claim.role)} <ClaimChip lane={sel.lane} card={ev.cardId} claim={ev.claim} {now} mini /></span>
+              <span class="evrow">{displayName(ev.claim.role)} <ClaimChip lane={sel.lane} card={ev.cardId} claim={ev.claim} {now} mini />{#if art}<ArtifactButton lane={sel.lane} artifact={art} from={`decision:${decision.id}`} tone="drawer" />{/if}</span>
+            {:else if art}
+              <span class="evrow"><ArtifactButton lane={sel.lane} artifact={art} from={`decision:${decision.id}`} tone="drawer" /></span>
             {:else}
               <span class="evrow"><code>{id}</code></span>
             {/if}
@@ -140,6 +168,35 @@
     </section>
     <p class="dr-note"><b>Agents can claim. Only Master d2t decides.</b></p>
     <p class="dr-card"><b>Card</b> {card.label}{sel.kind === 'decision' && sel.deck ? ' · Done deck' : ''}<br /><b>Run</b> {lane.run_id}{lane.task ? ` · ${lane.task}` : ''}</p>
+  {:else if !gone && artifact && lane}
+    {@const pin = pinnedLine(lane, artifact)}
+    <section class="dr-sec">
+      <h4>ARTIFACT</h4>
+      <dl class="fact">
+        <dt>path</dt>
+        <dd class="path">
+          <code bind:this={pathEl}>{artifact.path}</code>
+          <button type="button" class="copy" aria-label="Copy path" title="Copy path" onclick={() => copyPath(artifact.path)}>
+            <Glyph name={copied ? 'check' : 'copy'} scale={2} />
+          </button>
+        </dd>
+        <dt>sha256</dt><dd><code aria-hidden="true" title={artifact.sha256}>{shortSha(artifact.sha256)}</code><span class="vh">{artifact.sha256}</span></dd>
+        <dt>pinned</dt>
+        <dd>
+          {#if pin.decision}
+            <button type="button" class="pinned" onclick={() => openPin(pin.decision!.id)}>{pin.text}</button>
+          {:else}<span class="dim">{pin.text}</span>{/if}
+          {#if artifact.superseded}<span class="dim"> · superseded</span>{/if}
+        </dd>
+      </dl>
+    </section>
+    <section class="dr-sec">
+      <h4>BODY</h4>
+      <textarea class="body" readonly spellcheck="false" aria-label="{artifact.name} body" value={artifact.body}></textarea>
+      {#if artifact.truncated}<p class="trunc">truncated at 64 KB</p>{/if}
+    </section>
+    <p class="dr-note"><b>Master d2t approves these bytes.</b></p>
+    <p class="dr-card"><b>Stage</b> {artifact.stage.replace('_', ' ')}<br /><b>Run</b> {lane.run_id}{lane.task ? ` · ${lane.task}` : ''}</p>
   {/if}
 </aside>
 
@@ -200,6 +257,18 @@
   .dr-line .c { color: var(--holo); } .dr-line .g { color: var(--gold); }
   .dr-note { margin: 16px 18px 0; padding: 10px 12px; border-left: 2px solid var(--gold); background: color-mix(in srgb, var(--gold) 6%, transparent); font: 13px/1.45 var(--sans); color: var(--text-2); }
   .dr-note b { color: var(--text); }
+  .path { display: flex; align-items: center; gap: 6px; }
+  .path code { flex: 1; min-width: 0; user-select: all; }
+  .copy { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: var(--r-md); border: 1px solid var(--gold-a3); background: var(--gold-a2); cursor: pointer; padding: 0; }
+  .copy:hover { background: color-mix(in srgb, var(--gold) 28%, transparent); }
+  .pinned { padding: 0; border: 0; background: none; font: 700 12px/1.3 var(--mono); color: var(--gold); text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .dim { color: var(--text-3); }
+  .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .body {
+    display: block; box-sizing: border-box; width: 100%; height: 52vh; margin: 0; overflow: auto; resize: vertical; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-inset); background: var(--space-0);
+    font: 12px/1.45 var(--mono); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .trunc { margin: 6px 0 0; font: 12px/1.3 var(--mono); color: var(--text-3); }
   .dr-card { margin: 16px 18px 0; font: 12px/1.5 var(--mono); color: var(--text-3); overflow-wrap: anywhere; }
   .dr-card b { color: var(--text-2); font-weight: 600; }
 </style>

@@ -2,7 +2,7 @@
 // keyboard rule. The playhead is an absolute time (ms) on the recording's own clock; every deadline
 // on the board is compared with it, never with wall time.
 import type { Selection } from './drawer.ts';
-import { eventName, laneKey } from './model.ts';
+import { eventName, laneKey, withBodies } from './model.ts';
 import type { Lane, Recording } from './types.ts';
 
 const times = new WeakMap<Recording, number[]>();
@@ -42,10 +42,11 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 
 // One run's lane at `ms`, from its latest applied event: the frame with last_event_at and
 // signal_lost_at restored from the playhead, plus the SIGNAL LOST overlay the live server adds
-// (from event gaps alone: no event for signal_lost_ms on a working lane).
+// (from event gaps alone: no event for signal_lost_ms on a working lane). Artifact bodies are joined
+// back from artifact_bodies (6-3).
 function laneFrom(rec: Recording, i: number, ms: number): Lane {
   const ev = rec.events[i];
-  const frame = rec.frames[ev.frame];
+  const frame = withBodies(rec.frames[ev.frame], rec.artifact_bodies);
   const working = !frame.terminal && !frame.parked;
   const at = Date.parse(ev.at);
   const slAt = working && Number.isFinite(at) ? iso(at + rec.signal_lost_ms) : null;
@@ -116,9 +117,10 @@ export function replayRoute(pathname: string): { name: string } | { bad: string 
 }
 
 // Does the drawer's source still exist on this board? A claim or decision whose card, or the item
-// itself, is absent at the playhead closes the drawer.
+// itself, is absent at the playhead closes the drawer; so does an artifact not yet verified there.
 export function selectionPresent(sel: Selection, lanes: readonly Lane[]): boolean {
   const lane = lanes.find((l) => laneKey(l) === sel.lane);
+  if (sel.kind === 'artifact') return Boolean(lane?.artifacts?.some((a) => a.id === sel.artifact));
   const card = lane?.cards.find((c) => c.id === sel.card);
   if (!lane || !card) return false;
   if (sel.kind === 'claim') return card.claims.some((c) => c.step_id === sel.step);

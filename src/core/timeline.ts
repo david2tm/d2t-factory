@@ -10,11 +10,15 @@
 // `deadlines.signal_lost_at` blanked: the browser restores both from the playhead. A fact that no
 // command cites (as a `data.evidence` id) changes nothing else in the lane, so it reuses the
 // previous frame without re-projecting. Identical frames are stored once.
+//
+// Artifact bodies (6-3). A frame's artifacts carry no `body`: each body sits once in
+// `artifact_bodies`, keyed by artifact id (absent when there are none), and the browser joins them
+// back. Inline, a body would repeat in every frame of its run.
 import { signalLostCard } from './cards.ts';
 import { HEARTBEAT_INTERVAL_MS, SIGNAL_LOST_MISSED } from './config.ts';
 import type { AnyEvent, Card } from './events.ts';
 import { isDecisionKind } from './events.ts';
-import { projectRun, type Lane, type RunInput } from './projection.ts';
+import { projectRun, type ArtifactView, type Lane, type RunInput } from './projection.ts';
 import { fold } from './reducer.ts';
 
 export interface TimelineEvent {
@@ -28,6 +32,10 @@ export interface TimelineEvent {
 
 export interface TimelineRun { repo_hash: string; run_id: string; signal_lost_card: Card }
 
+// A frame: a lane whose artifacts carry no body (Timeline.artifact_bodies holds them).
+export type FrameArtifact = Omit<ArtifactView, 'body'>;
+export type Frame = Omit<Lane, 'artifacts'> & { artifacts?: FrameArtifact[] };
+
 export interface Timeline {
   name: string;
   recorded_at: string;
@@ -36,7 +44,8 @@ export interface Timeline {
   signal_lost_ms: number;
   runs: TimelineRun[];
   events: TimelineEvent[];
-  frames: Lane[];
+  frames: Frame[];
+  artifact_bodies?: Record<string, string>; // artifact id → body (6-3)
 }
 
 export interface TimelineManifest { name: string; recorded_at: string }
@@ -71,17 +80,28 @@ function citedIds(commands: readonly AnyEvent[]): Set<string> {
   return ids;
 }
 
-const blank = (lane: Lane): Lane => ({ ...lane, last_event_at: null, deadlines: { ...lane.deadlines, signal_lost_at: null } });
+// The lane with its clock fields blanked and its artifact bodies moved into `bodies`.
+function blank(lane: Lane, bodies: Record<string, string>): Frame {
+  const { artifacts, ...rest } = lane;
+  const frame: Frame = { ...rest, last_event_at: null, deadlines: { ...lane.deadlines, signal_lost_at: null } };
+  if (!artifacts) return frame;
+  for (const a of artifacts) bodies[a.id] = a.body;
+  // Key order kept: artifacts sits where the lane had it, before any later key.
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(lane)) out[k] = k === 'artifacts' ? artifacts.map(({ body: _body, ...a }) => a) : (frame as Record<string, unknown>)[k];
+  return out as Frame;
+}
 
 export function buildTimeline(manifest: TimelineManifest, runs: readonly TimelineRunInput[]): Timeline {
-  const frames: Lane[] = [];
+  const frames: Frame[] = [];
+  const bodies: Record<string, string> = {};
   const frameIds = new Map<string, number>();
   const frameOf = (lane: Lane): number => {
-    const json = JSON.stringify(blank(lane));
+    const json = JSON.stringify(blank(lane, bodies));
     let i = frameIds.get(json);
     if (i === undefined) {
       i = frames.length;
-      frames.push(JSON.parse(json) as Lane);
+      frames.push(JSON.parse(json) as Frame);
       frameIds.set(json, i);
     }
     return i;
@@ -116,5 +136,6 @@ export function buildTimeline(manifest: TimelineManifest, runs: readonly Timelin
     runs: runs.map((r) => ({ repo_hash: r.repo_hash, run_id: r.run_id, signal_lost_card: signalLostCard(r.run_id) })),
     events,
     frames,
+    ...(Object.keys(bodies).length ? { artifact_bodies: bodies } : {}),
   };
 }

@@ -63,7 +63,7 @@ test('claim chips (AD-7): reported → claimed with overdue_at = report + CLAIM_
   const before = upTo(all, (e) => e.kind === 'step_verified' && (e.data as { step_id: string }).step_id === builder.id);
   const l1 = lane(before);
   const c1 = card(l1, 'slice:S1').claims;
-  assert.deepEqual(c1, [{ step_id: builder.id, role: 'builder', kind: 'spawn', state: 'claimed', reported_at: reported.ts, overdue_at: plus(reported.ts, CLAIM_OVERDUE_MS), superseded: false, evidence: [] }]);
+  assert.deepEqual(c1, [{ step_id: builder.id, role: 'builder', kind: 'spawn', state: 'claimed', reported_at: reported.ts, overdue_at: plus(reported.ts, CLAIM_OVERDUE_MS), waiting_on: null, waiting_for: null, superseded: false, evidence: [] }]);
   assert.equal(l1.deadlines.overdue_at, plus(reported.ts, CLAIM_OVERDUE_MS));
   assert.equal(l1.deadlines.signal_lost_at, plus(reported.ts, HEARTBEAT_INTERVAL_MS * SIGNAL_LOST_MISSED));
   assert.equal(card(l1, 'slice:S1').column, 'in_progress');
@@ -335,4 +335,62 @@ test('PAUSED (6-1): the newest stop fact shows until a later command or main-age
     const events = load(name);
     for (let i = 1; i <= events.length; i++) assert.equal('paused' in lane(events.slice(0, i)), false, `${name} @${i}`);
   }
+});
+
+// 6-3 (AD-23): the happy path with the spec's step_verified embedding its artifact and gate 1 pinning it.
+function withSpecArtifact(all: AnyEvent[]) {
+  const spec = all.find((e) => e.kind === 'step_issued' && (e.data as { role?: string }).role === 'spec-writer')!;
+  const verified = all.find((e) => e.kind === 'step_verified' && (e.data as { step_id: string }).step_id === spec.id)!;
+  const gate1 = all.find((e) => e.kind === 'gate_1_passed')!;
+  const artifact = { path: '/h/steps/spec/out.md', sha256: 's1', body: 'STATUS: DONE\n# Footer [REDACTED]\n', truncated: false };
+  const events = all.map((e) => (e.id === verified.id ? { ...e, data: { ...e.data, artifact } } : e.id === gate1.id ? { ...e, data: { ...e.data, pins: [{ path: artifact.path, sha256: 's1' }] } } : e)) as AnyEvent[];
+  return { events, spec, verified, gate1, artifact };
+}
+
+test('artifacts (6-3): an embedding step_verified is one artifact on the lane, pinned_by the decision whose pins hold its bytes; old events project as before', () => {
+  const all = load('happy-path');
+  const { events, spec, verified, gate1, artifact } = withSpecArtifact(all);
+  const l = lane(events);
+  assert.deepEqual(l.artifacts, [{
+    id: verified.id, step_id: spec.id, stage: 'SPEC', name: 'spec.md', path: artifact.path, sha256: 's1', body: artifact.body, truncated: false, superseded: false, pinned_by: gate1.id,
+  }]);
+  assert.equal('artifacts' in lane(all), false, 'no embed, no artifacts key');
+  // Before gate 1 the artifact is not yet approved, and the open gate_1 card names it as a file.
+  const card1 = { type: 'gate_1', title: 'Gate 1 — approve the spec', commands: ['/factory approve gate1'] };
+  const gate = ev('step_issued', { kind: 'ask_human', stage: 'SPEC', attempt: 1, card: card1 });
+  const open = lane([...upTo(events, (e) => e.id === gate1.id), gate]);
+  assert.equal(open.artifacts![0].pinned_by, null);
+  assert.deepEqual(open.needs_you, [{ ask_id: gate.id, raised_at: gate.ts, card: card1, files: [verified.id] }]);
+  // Other cards carry no files.
+  assert.ok(lane(load('findings-escalation-rework')).needs_you.every((n) => !('files' in n)));
+});
+
+test('artifacts (6-3): a Gate 1 rework supersedes the old spec; the new one is not pinned until gate 1 passes again, and the card then names only it', () => {
+  const { events, spec, verified, gate1 } = withSpecArtifact(load('happy-path'));
+  const before = upTo(events, (e) => e.id === gate1.id);
+  const rework = human('rework_requested', { target: 'gate1', note: 'grey footer', voids: [spec.id, verified.id] });
+  const sw2 = ev('step_issued', { kind: 'spawn', stage: 'SPEC', attempt: 2, role: 'spec-writer', output_path: '/h/steps/spec2/out.md' });
+  const art2 = { path: '/h/steps/spec2/out.md', sha256: 's2', body: '# Grey footer\n', truncated: false };
+  const v2 = ev('step_verified', { step_id: sw2.id, evidence: [], artifact: art2 });
+  const respec = [rework, sw2, ev('step_claimed', { step_id: sw2.id }, { session: SESSION }), ev('step_reported', { step_id: sw2.id, output: { status: 'DONE', sha256: 's2' } }, { session: SESSION }), v2];
+  const card1 = { type: 'gate_1', title: 'Gate 1 — approve the spec', commands: ['/factory approve gate1'] };
+  const gate = ev('step_issued', { kind: 'ask_human', stage: 'SPEC', attempt: 1, card: card1 });
+  const l = lane([...before, ...respec, gate]);
+  assert.deepEqual(l.artifacts!.map((a) => [a.id, a.superseded, a.pinned_by]), [[verified.id, true, null], [v2.id, false, null]]);
+  assert.deepEqual(l.needs_you.map((n) => n.files), [[v2.id]]);
+  const passed = human('gate_1_passed', { pins: [{ path: art2.path, sha256: 's2' }] });
+  const l2 = lane([...before, ...respec, gate, passed]);
+  assert.deepEqual(l2.artifacts!.map((a) => [a.superseded, a.pinned_by]), [[true, null], [false, passed.id]]);
+});
+
+test('claims (6-3): a scaffolder waiting on its checks stays CLAIMED with no overdue_at, and sets no lane overdue deadline', () => {
+  const all = load('happy-path');
+  const sc = all.find((e) => e.kind === 'step_issued' && (e.data as { role?: string }).role === 'scaffolder')!;
+  // The fixture's reports embed no output: the scaffolder's says DONE here.
+  const events = upTo(all, (e) => e.kind === 'step_verified' && (e.data as { step_id: string }).step_id === sc.id)
+    .map((e) => (e.kind === 'step_reported' && e.data.step_id === sc.id ? { ...e, data: { ...e.data, output: { status: 'DONE' } } } : e)) as AnyEvent[];
+  const l = lane(events);
+  const claim = card(l, 'stage:SCAFFOLD').claims.find((c) => c.step_id === sc.id)!;
+  assert.deepEqual([claim.state, claim.waiting_on, claim.waiting_for, claim.overdue_at], ['claimed', 'checks', 'install, health, test', null]);
+  assert.equal(l.deadlines.overdue_at, null, 'a claim waiting on checks never goes overdue');
 });

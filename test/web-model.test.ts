@@ -9,7 +9,7 @@ import { fold } from '../src/core/reducer.ts';
 import { readLines } from '../src/store/jsonl.ts';
 import { gate1Card, signalLostCard } from '../src/core/cards.ts';
 import {
-  actionRows, activeCardId, ago, budgetClock, cells, elapsedClock, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
+  actionRows, activeCardId, ago, artifactFor, budgetClock, cells, chipGloss, gateFiles, pinnedLine, proofRow, sealArtifact, shortSha, withBodies, elapsedClock, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
 } from '../src/dashboard/web/src/lib/model.ts';
 import type { Lane } from '../src/dashboard/web/src/lib/types.ts';
 
@@ -35,7 +35,7 @@ test('claim chips: claimed until overdue_at, then UNVERIFIED with no server even
   // The first reported step, before its step_verified.
   const l = lane(upTo(happy, (e) => e.kind === 'step_verified'));
   const claim = l.cards.flatMap((c) => c.claims)[0];
-  assert.ok(claim, 'a reported claim');
+  assert.ok(claim?.overdue_at, 'a reported claim waiting on its hook facts');
   assert.equal(claim.state, 'claimed');
   assert.equal(chipState(claim, at(claim.overdue_at, -1)), 'claimed');
   assert.equal(chipState(claim, at(claim.overdue_at)), 'unverified');
@@ -47,13 +47,13 @@ test('claim chips: claimed until overdue_at, then UNVERIFIED with no server even
   const done = lane(happy);
   const all = done.cards.flatMap((c) => c.claims);
   assert.ok(all.length >= 6);
-  for (const c of all) assert.equal(chipState(c, at(c.overdue_at, 86_400_000)), 'verified');
+  for (const c of all) assert.equal(chipState(c, at(c.overdue_at!, 86_400_000)), 'verified');
 
   // A reissued builder step: superseded, never UNVERIFIED, and out of the truth counts.
   const f = lane(findings);
   const voided = f.cards.flatMap((c) => c.claims).filter((c) => c.superseded);
   assert.ok(voided.length > 0, 'the fixture has a superseded claim');
-  for (const c of voided) assert.equal(chipState(c, at(c.overdue_at, 86_400_000)), 'superseded');
+  for (const c of voided) assert.equal(chipState(c, at(c.overdue_at!, 86_400_000)), 'superseded');
   const counted = truthCounts([f], Date.now());
   assert.equal(counted.claimed + counted.verified + counted.unverified, f.cards.flatMap((c) => c.claims).length - voided.length);
 });
@@ -218,7 +218,7 @@ test('elapsedClock (6-2): no time limit: whole minutes as h:mm, counting up from
 });
 
 test('pendingReviewers (3-3): one row per rostered reviewer with no live claim, on a slice being built or reviewed', () => {
-  const claim = (role: string, superseded = false) => ({ step_id: role, role, kind: 'spawn', state: 'verified' as const, reported_at: 't', overdue_at: 't', superseded, evidence: [] });
+  const claim = (role: string, superseded = false) => ({ step_id: role, role, kind: 'spawn', state: 'verified' as const, reported_at: 't', overdue_at: 't', waiting_on: null, waiting_for: null, superseded, evidence: [] });
   const card = { kind: 'slice' as const, state: 'IN_REVIEW', roster: ['reviewer-code', 'reviewer-ux', 'reviewer-a11y'], claims: [claim('builder'), claim('reviewer-code'), claim('reviewer-ux', true)] };
   assert.deepEqual(pendingReviewers(card), ['reviewer-ux', 'reviewer-a11y']);
   assert.deepEqual(pendingReviewers({ ...card, state: 'BUILDING' }), ['reviewer-ux', 'reviewer-a11y']);
@@ -228,7 +228,7 @@ test('pendingReviewers (3-3): one row per rostered reviewer with no live claim, 
 });
 
 test('reviewersAtWork: the generic "reviewers reviewing…" row is only for a slice in review with no pending roster row and no verdict since the newest build', () => {
-  const claim = (role: string, reported_at: string, superseded = false) => ({ step_id: role, role, kind: 'spawn', state: 'verified' as const, reported_at, overdue_at: 't', superseded, evidence: [] });
+  const claim = (role: string, reported_at: string, superseded = false) => ({ step_id: role, role, kind: 'spawn', state: 'verified' as const, reported_at, overdue_at: 't', waiting_on: null, waiting_for: null, superseded, evidence: [] });
   const card = { kind: 'slice' as const, state: 'IN_REVIEW', roster: ['reviewer-code', 'reviewer-ux'], claims: [claim('builder', '2'), claim('reviewer-code', '1')] };
   assert.deepEqual(pendingReviewers(card), ['reviewer-ux']);
   assert.equal(reviewersAtWork(card), false, 'pending roster rows already show who is reviewing');
@@ -274,4 +274,46 @@ test('actionRows (6-2): a card\'s options with their then lines and its reply; a
   assert.deepEqual(sl.rows.map((r) => r.command), ['/factory resume r-1']);
   assert.ok(sl.rows[0].then);
   assert.equal('reply' in sl, false);
+});
+
+test('claim waiting (6-3): CLAIMED with a gloss while it waits on Master d2t or on checks, never UNVERIFIED; the drawer proof row says on what', () => {
+  const base = { step_id: 'x', role: 'spec-writer', kind: 'spawn', state: 'claimed' as const, reported_at: '2026-10-24T10:00:00.000Z', superseded: false, evidence: [] };
+  const human = { ...base, overdue_at: null, waiting_on: 'human' as const, waiting_for: 'Intake — confirm the task' };
+  const checks = { ...base, overdue_at: null, waiting_on: 'checks' as const, waiting_for: 'health, test' };
+  const facts = { ...base, overdue_at: '2026-10-24T10:00:30.000Z', waiting_on: null, waiting_for: null };
+  const late = at('2026-10-24T12:00:00.000Z');
+  assert.deepEqual([chipState(human, late), chipGloss(human, chipState(human, late)), proofRow(human, chipState(human, late))], ['claimed', '· awaiting Master d2t', 'waiting on Master d2t — Intake — confirm the task']);
+  assert.deepEqual([chipState(checks, late), chipGloss(checks, 'claimed'), proofRow(checks, 'claimed')], ['claimed', '· checks running', 'waiting on health, test']);
+  assert.deepEqual([chipState(facts, late), chipGloss(facts, 'unverified'), proofRow(facts, 'unverified')], ['unverified', '· no hook fact', 'no hook fact']);
+  assert.deepEqual([chipGloss(facts, 'claimed'), proofRow(facts, 'claimed')], ['', 'none yet']);
+  assert.deepEqual([chipGloss(human, 'verified'), chipGloss(human, 'superseded')], ['', '']);
+  assert.deepEqual(truthCounts([{ cards: [{ claims: [human, checks, facts] }] } as unknown as Lane], late), { claimed: 2, verified: 0, unverified: 1 }, 'the truth legend keeps three entries');
+});
+
+test('artifacts (6-3): lookup by artifact or step id, the gate card\'s file rows, the intake seal\'s artifact, the pinned line, and the replay body join', () => {
+  const art = (id: string, step_id: string, stage: Lane['stage'], name: string, pinned_by: string | null, superseded = false) =>
+    ({ id, step_id, stage, name, path: `/h/${step_id}/out.md`, sha256: `${id}0123456789abcdef`, body: `body ${id}`, truncated: false, superseded, pinned_by });
+  const decisions = [
+    { id: 'D1', kind: 'intake_confirmed', at: 't', decided_by: 'human', prompt_text: null, stage: 'INTAKE' as const, evidence: ['chat'], superseded: false },
+    { id: 'D2', kind: 'gate_1_passed', at: 't', decided_by: 'human', prompt_text: null, stage: 'SPEC' as const, evidence: ['lint', 'sw'], superseded: false },
+  ];
+  const lane = { artifacts: [art('A1', 'chat', 'INTAKE', 'intake.md', 'D1'), art('A2', 'sw', 'SPEC', 'spec.md', 'D2'), art('A3', 'ds', 'DESIGN', 'design.md', null)], decisions };
+  assert.equal(artifactFor(lane, 'A2')?.name, 'spec.md');
+  assert.equal(artifactFor(lane, 'sw')?.id, 'A2', 'a Decision drawer evidence id is a step id');
+  assert.equal(artifactFor(lane, 'lint'), null);
+  assert.equal(artifactFor({}, 'A2'), null, 'a run from before 6-3');
+  assert.deepEqual(gateFiles(lane, { files: ['A2', 'A3', 'gone'] }).map((a) => a.name), ['spec.md', 'design.md']);
+  assert.deepEqual(gateFiles(lane, {}), []);
+  assert.equal(sealArtifact(lane, decisions[0])?.id, 'A1');
+  assert.equal(sealArtifact(lane, decisions[1]), null, 'only the intake seal opens an artifact');
+  assert.equal(sealArtifact({}, decisions[0]), null);
+  assert.deepEqual(pinnedLine(lane, lane.artifacts[1]).text, 'pinned by Gate 1 · approved by Master d2t');
+  assert.deepEqual(pinnedLine(lane, lane.artifacts[2]), { text: 'not yet approved', decision: null });
+  assert.equal(shortSha('0123456789abcdef'), '0123456789ab');
+  const { body: _b, ...frameArt } = lane.artifacts[1];
+  const frame = { ...lane, artifacts: [frameArt] } as never;
+  assert.equal(withBodies(frame, { A2: 'the bytes' }).artifacts![0].body, 'the bytes');
+  assert.equal(withBodies(frame, undefined).artifacts![0].body, '');
+  const none = { decisions } as never;
+  assert.equal(withBodies(none, {}), none, 'a frame without artifacts is the lane');
 });

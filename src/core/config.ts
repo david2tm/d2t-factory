@@ -16,13 +16,16 @@ export const CLAIM_GRACE_MS = 5_000;
 export const SPEC_MAX_LINES = 40;
 // 6-1: consecutive Stop blocks for the holder before the next stop is let through (stop_forced).
 export const STOP_BLOCK_MAX = 3;
+// 6-3: the most bytes of an artifact's redacted body that step_verified embeds (AD-23), cut on a
+// UTF-8 boundary; a longer body is marked truncated.
+export const ARTIFACT_EMBED_MAX = 64 * 1024;
 // `factory check`: the longest a test check may run, and how long health is polled before it fails.
 export const CHECK_TIMEOUT_MS = 10 * 60_000;
 export const HEALTH_TIMEOUT_MS = 60_000;
 export const HEALTH_POLL_MS = 500;
 
 // Not in the AD-21 table but shared by several writers.
-export const MAX_LINE_BYTES = 32 * 1024; // AD-28
+export const MAX_LINE_BYTES = 96 * 1024; // AD-28: room for a step_verified carrying an ARTIFACT_EMBED_MAX body
 export const DASHBOARD_PORT_DEFAULT = 4870;
 // The dashboard server's rescan of ~/.factory, behind its fs.watch (AD-16).
 export const DASHBOARD_POLL_MS = 2000;

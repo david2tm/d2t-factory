@@ -1,7 +1,7 @@
 <script lang="ts">
   // A Stage card: a holo-plate for one pipeline phase, its claims and its Decision seals.
   import { selection } from '../lib/drawer.ts';
-  import { laneKey, sealsOf } from '../lib/model.ts';
+  import { laneKey, sealArtifact, sealsOf } from '../lib/model.ts';
   import { STAGE_GLYPH } from '../lib/sprites.ts';
   import type { BoardCard, Lane } from '../lib/types.ts';
   import ClaimList from './ClaimList.svelte';
@@ -24,7 +24,7 @@
   {#if lost}<div class="lost-tag"><i></i>SIGNAL LOST <span>· last seen {lost}</span></div>{/if}
   <ClaimList lane={key} card={card.id} claims={card.claims} {now} />
   {#if seals.length}
-    <div class="seals">{#each seals as d (d.id)}<Seal lane={key} card={card.id} decision={d} />{/each}</div>
+    <div class="seals">{#each seals as d (d.id)}<Seal lane={key} card={card.id} decision={d} artifact={sealArtifact(lane, d)} />{/each}</div>
   {/if}
 </div>
 

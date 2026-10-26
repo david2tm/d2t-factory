@@ -1,7 +1,7 @@
 // Pure, DOM-free view logic for the board (2-2). Everything here derives from the 2-1 Lane shape;
 // the only clock is the `now` passed in, compared against the projection's absolute deadlines. The
 // browser holds no thresholds.
-import type { BoardCard, BudgetView, Card, CardOption, Claim, Column, Decision, Lane, NeedsYou, Stage, TrackStatus } from './types.ts';
+import type { ArtifactView, BoardCard, BudgetView, Card, CardOption, Claim, Column, Decision, Frame, Lane, NeedsYou, Stage, TrackStatus } from './types.ts';
 
 export const COLUMNS: readonly Column[] = ['backlog', 'in_progress', 'in_review', 'needs_you', 'done'];
 export const COLUMN_TITLE: Record<Column, string> = { backlog: 'Backlog', in_progress: 'In Progress', in_review: 'In Review', needs_you: 'Needs You', done: 'Done' };
@@ -45,15 +45,33 @@ export function doneDeck(cards: readonly BoardCard[]): { shown: BoardCard[]; res
 export type ChipState = 'claimed' | 'verified' | 'unverified' | 'superseded';
 
 // A voided claim is superseded whatever it said; a verified one stays verified; a claimed one past
-// its overdue_at is UNVERIFIED with no server event.
+// its overdue_at is UNVERIFIED with no server event. A claim waiting on Master d2t or on checks has
+// no overdue_at (6-3) and stays CLAIMED.
 export function chipState(claim: Claim, now: number): ChipState {
   if (claim.superseded) return 'superseded';
   if (claim.state === 'verified') return 'verified';
-  const due = Date.parse(claim.overdue_at);
+  const due = claim.overdue_at ? Date.parse(claim.overdue_at) : NaN;
   return Number.isFinite(due) && now >= due ? 'unverified' : 'claimed';
 }
 
 export const CHIP_WORD: Record<ChipState, string> = { claimed: 'CLAIMED', verified: 'VERIFIED', unverified: 'UNVERIFIED', superseded: 'SUPERSEDED' };
+
+// The chip's gloss (6-3): `· no hook fact` on UNVERIFIED; on CLAIMED what the claim waits on,
+// `· awaiting Master d2t` or `· checks running`. A gloss on CLAIMED, never a fourth state.
+export function chipGloss(claim: Pick<Claim, 'waiting_on'>, state: ChipState): string {
+  if (state === 'unverified') return '· no hook fact';
+  if (state !== 'claimed') return '';
+  return claim.waiting_on === 'human' ? '· awaiting Master d2t' : claim.waiting_on === 'checks' ? '· checks running' : '';
+}
+
+// The Claim drawer's proof row while there is no proof: `waiting on Master d2t — <card title>`,
+// `waiting on <checks>`, `no hook fact` (UNVERIFIED) or `none yet`.
+export function proofRow(claim: Pick<Claim, 'waiting_on' | 'waiting_for'>, state: ChipState): string {
+  if (state === 'unverified') return 'no hook fact';
+  if (state === 'claimed' && claim.waiting_on === 'human') return `waiting on Master d2t${claim.waiting_for ? ` — ${claim.waiting_for}` : ''}`;
+  if (state === 'claimed' && claim.waiting_on === 'checks') return `waiting on ${claim.waiting_for ?? 'checks'}`;
+  return 'none yet';
+}
 
 // Claim counts for the Truth legend; superseded claims are left out.
 export function truthCounts(lanes: readonly Lane[], now: number): { claimed: number; verified: number; unverified: number } {
@@ -356,3 +374,39 @@ export function actionRows(card: Pick<Card, 'commands' | 'options' | 'reply'>): 
   if (!card.options) return { rows: card.commands.map((command) => ({ command, then: '' })) };
   return { rows: card.options, ...(card.reply ? { reply: card.reply } : {}) };
 }
+
+// --- Artifacts (6-3) -----------------------------------------------------------------------------
+
+// A replay frame with its artifact bodies joined back from the recording's artifact_bodies.
+export function withBodies(frame: Frame, bodies: Record<string, string> | undefined): Lane {
+  if (!frame.artifacts) return frame as Lane;
+  return { ...frame, artifacts: frame.artifacts.map((a) => ({ ...a, body: bodies?.[a.id] ?? '' })) };
+}
+
+// The artifact with this id, else the newest one of the step with this id (a Decision drawer's
+// evidence ids are step ids), or null.
+export function artifactFor(lane: Pick<Lane, 'artifacts'>, id: string): ArtifactView | null {
+  const all = lane.artifacts ?? [];
+  return all.find((a) => a.id === id) ?? all.filter((a) => a.step_id === id).at(-1) ?? null;
+}
+
+// The artifact an intake seal opens: the intake it pinned.
+export function sealArtifact(lane: Pick<Lane, 'artifacts'>, d: Pick<Decision, 'id' | 'kind' | 'evidence'>): ArtifactView | null {
+  if (d.kind !== 'intake_confirmed') return null;
+  return (lane.artifacts ?? []).find((a) => a.pinned_by === d.id && a.stage === 'INTAKE') ?? d.evidence.map((id) => artifactFor(lane, id)).find((a) => a !== null) ?? null;
+}
+
+// The Gate card's file rows: its files, as artifacts.
+export function gateFiles(lane: Pick<Lane, 'artifacts'>, needs: Pick<NeedsYou, 'files'>): ArtifactView[] {
+  return (needs.files ?? []).map((id) => artifactFor(lane, id)).filter((a): a is ArtifactView => a !== null);
+}
+
+// The Artifact drawer's `pinned` row: `pinned by <seal line>` (gold) or `not yet approved`.
+export function pinnedLine(lane: Pick<Lane, 'decisions'>, a: Pick<ArtifactView, 'pinned_by'>): { text: string; decision: Decision | null } {
+  const d = a.pinned_by ? lane.decisions.find((x) => x.id === a.pinned_by) ?? null : null;
+  return d ? { text: `pinned by ${sealLine(d)}`, decision: d } : { text: 'not yet approved', decision: null };
+}
+
+// The card an artifact belongs to: its stage card (evidence-selected while the drawer shows it).
+export const artifactCard = (a: Pick<ArtifactView, 'stage'>): string => `stage:${a.stage}`;
+export const shortSha = (sha: string): string => sha.slice(0, 12);

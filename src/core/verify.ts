@@ -114,17 +114,37 @@ export function isParked(s: RunState): boolean {
 
 // --- claim overlay (the dashboard's CLAIMED / VERIFIED chip) ---------------------------------
 
-export interface ClaimOverlay { state: 'claimed' | 'verified' | null; overdue_at: string | null; evidence: string[] }
+export type WaitingOn = 'human' | 'checks';
+export interface ClaimOverlay { state: 'claimed' | 'verified' | null; overdue_at: string | null; waiting_on: WaitingOn | null; waiting_for: string | null; evidence: string[] }
+
+const CONTRACT_CHECKS = ['contract.install', 'contract.health', 'contract.test'] as const;
+
+// 6-3 (AD-7): what a CLAIMED step waits on besides its hook facts. `human`: an ask_human step, or the
+// subject of an open ask (waiting_for: that ask's card title, else the step's own). `checks`: a
+// scaffolder that reported DONE with no failure and no open ask (schedule.ts SCAFFOLD's condition,
+// so the gaps before each check is issued count too); waiting_for names the contract checks not yet
+// verified (`install, health, test`).
+function waitingOf(s: RunState, st: Step): { waiting_on: WaitingOn | null; waiting_for: string | null } {
+  const ask = Object.values(s.asks).find((a) => a.open && a.step_id === st.id);
+  if (ask || st.kind === 'ask_human') return { waiting_on: 'human', waiting_for: ask?.card?.title ?? st.card?.title ?? null };
+  if (st.role === 'scaffolder' && st.state === 'reported' && st.output?.status === 'DONE' && !st.output.failure) {
+    const left = CONTRACT_CHECKS.filter((c) => !isVerified(s, latestCheckStep(s, c, st.issued_seq))).map((c) => c.replace('contract.', ''));
+    return { waiting_on: 'checks', waiting_for: left.join(', ') || null };
+  }
+  return { waiting_on: null, waiting_for: null };
+}
 
 // AD-7: only a reported step carries a claim. It is VERIFIED once the CLI appended step_verified and
 // nothing voided it (with that event's evidence ids), else CLAIMED; overdue_at is when a CLAIMED chip
-// reads UNVERIFIED. The caller compares overdue_at with its own clock: no `now` here.
+// reads UNVERIFIED. A claim waiting on the human or on the CLI's checks (6-3) is never overdue: its
+// overdue_at is null. The caller compares overdue_at with its own clock: no `now` here.
 export function claimOverlay(s: RunState, st: Step, reportedTs: string | undefined, verifiedEvidence: readonly string[] = []): ClaimOverlay {
   const at = reportedTs ? Date.parse(reportedTs) : NaN;
-  if (!Number.isFinite(at)) return { state: null, overdue_at: null, evidence: [] };
+  if (!Number.isFinite(at)) return { state: null, overdue_at: null, waiting_on: null, waiting_for: null, evidence: [] };
   const overdue_at = new Date(at + CLAIM_OVERDUE_MS).toISOString();
-  if (isVerified(s, st)) return { state: 'verified', overdue_at, evidence: [...verifiedEvidence] };
-  return { state: 'claimed', overdue_at, evidence: [] };
+  if (isVerified(s, st)) return { state: 'verified', overdue_at, waiting_on: null, waiting_for: null, evidence: [...verifiedEvidence] };
+  const w = waitingOf(s, st);
+  return { state: 'claimed', overdue_at: w.waiting_on ? null : overdue_at, ...w, evidence: [] };
 }
 
 // --- agent steps -----------------------------------------------------------------------------

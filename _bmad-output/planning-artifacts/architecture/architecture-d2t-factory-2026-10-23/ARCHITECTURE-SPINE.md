@@ -174,7 +174,7 @@ flowchart BT
   - **`step_verified`.** When `next` or `done` observes the evidence, the CLI appends `step_verified{step_id, evidence:[fact ids]}`. Only `step_verified` unblocks dependent steps.
   - **Supporting facts.** A `tool_succeeded` from a test the builder ran itself is shown as supporting, never as verified.
   - **Overlay states** (the board's CLAIMED / VERIFIED / UNVERIFIED) apply only to `reported` steps:
-    - **reported:** evidence is pending. `waiting_on` says on what: `human` (an `ask_human` step, or the subject of an open ask), `checks` (its `run_check` steps are issued and not verified), or null (only hook facts). Only a null wait has an `overdue_at`.
+    - **reported:** evidence is pending. `waiting_on` says on what: `human` (an `ask_human` step, or the subject of an open ask), `checks` (a scaffolder that reported `DONE` with no failure and no open ask, until it is verified: it follows the SCAFFOLD schedule, so the gaps before each contract check is issued count too), or null (only hook facts). Only a null wait has an `overdue_at`.
     - **verified.**
     - **unverified:** `waiting_on` is null, and `CLAIM_OVERDUE_MS` has passed since `step_reported`. It means only "claimed, and the hooks never confirmed it".
     - The CLI's overdue reissue (AD-24) and the board both use this one overlay (dry run 1, finding 5).
@@ -478,7 +478,7 @@ flowchart BT
 - **Binds:** CAP-14, CAP-15
 - **Prevents:** Torn lines, lost events, and a cache that diverges from a cold rebuild.
 - **Rule:** `src/store/jsonl.ts` is the only reader and writer.
-  - **Writing.** Writers append `line + "\n"` with one `write` on an `O_APPEND` file descriptor, looping on short writes. Lines are capped at 32 KiB, with whitelisted fields truncated first.
+  - **Writing.** Writers append `line + "\n"` with one `write` on an `O_APPEND` file descriptor, looping on short writes. Lines are capped at 96 KiB (room for a `step_verified` that embeds a 64 KiB artifact body, AD-23), with whitelisted fields truncated first.
   - **Reading.** Readers consume up to the last `\n` and keep the byte offset. A terminated line that won't parse is skipped and logged. Events are de-duplicated by `id`.
   - **Ordering.** `loadRun` orders commands by file order, and facts by `(ts, id)`.
 

@@ -1,20 +1,26 @@
 <script lang="ts">
   // A Decision seal: gold glyph + the decision line, naming the human. Activating it opens the
-  // Evidence drawer (Decision). Superseded (voided) seals stay, dimmed and labeled.
+  // Evidence drawer (Decision); the intake seal (6-3) opens the intake it pinned (Artifact) when the
+  // run embedded it. Superseded (voided) seals stay, dimmed and labeled.
   import { openDrawer, selection, srcId } from '../lib/drawer.ts';
   import { sealLine } from '../lib/model.ts';
-  import type { Decision } from '../lib/types.ts';
+  import type { ArtifactView, Decision } from '../lib/types.ts';
   import Glyph from './Glyph.svelte';
 
-  let { lane, card, decision }: { lane: string; card: string; decision: Decision } = $props();
+  let { lane, card, decision, artifact = null }: { lane: string; card: string; decision: Decision; artifact?: ArtifactView | null } = $props();
   const src = $derived(srcId(lane, card, decision.id));
   const line = $derived(sealLine(decision));
-  const selected = $derived($selection?.kind === 'decision' && $selection.src === src);
+  const selected = $derived(($selection?.kind === 'decision' || $selection?.kind === 'artifact') && $selection.src === src);
+
+  function open(): void {
+    if (artifact) openDrawer({ kind: 'artifact', lane, card, artifact: artifact.id, src });
+    else openDrawer({ kind: 'decision', lane, card, decision: decision.id, deck: false, src });
+  }
 </script>
 
 <button type="button" class="seal" class:superseded={decision.superseded} class:selected data-src={src}
-  aria-label="{line}{decision.superseded ? ' (superseded)' : ''}. Open decision" title={line}
-  onclick={() => openDrawer({ kind: 'decision', lane, card, decision: decision.id, deck: false, src })}>
+  aria-label="{line}{decision.superseded ? ' (superseded)' : ''}. {artifact ? `Open ${artifact.name}` : 'Open decision'}" title={line}
+  onclick={open}>
   <Glyph name="seal" scale={2} cls="seal-glyph" />
   <span>{line}{#if decision.superseded}<small> SUPERSEDED</small>{/if}</span>
 </button>

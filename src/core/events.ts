@@ -80,6 +80,11 @@ export interface Intake {
 // An approved artifact pinned by content (AD-10).
 export interface Pin { path: string; sha256: string }
 
+// 6-3 (AD-23), additive: a gate-pinned artifact (intake, spec, design, plan) as step_verified embeds
+// it, so the board can show it without reading artifacts/: its path, the sha256 the step reported
+// (what the gates pin), and the body redacted then cut to ARTIFACT_EMBED_MAX bytes (truncated).
+export interface ArtifactEmbed { path: string; sha256: string; body: string; truncated: boolean }
+
 // What stage_completed embeds when RECON ends (AD-10): the cache file, its sha256 and the parsed context.
 export interface ReconEmbed { path: string; sha256: string; context: Record<string, unknown> }
 
@@ -101,7 +106,7 @@ export interface DataByKind {
   step_claimed: { step_id: string; agent_id?: string };
   // output: the redacted projection of the parsed out.md or check result (AD-23).
   step_reported: { step_id: string; note?: string; sha?: string; output?: Record<string, unknown> };
-  step_verified: { step_id: string; evidence: string[]; verdict?: string };
+  step_verified: { step_id: string; evidence: string[]; verdict?: string; artifact?: ArtifactEmbed };
   // 3-4: kind 'spawn' turns a reissued resume into a spawn (its agent may be gone).
   step_reissued: { old: string; new: string; output_path?: string; brief_path?: string; kind?: 'spawn' };
   check_ran: {

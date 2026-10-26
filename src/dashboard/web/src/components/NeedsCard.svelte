@@ -1,10 +1,13 @@
 <script lang="ts">
   // A Needs You card: Type tag, `raised HH:MM`, the title, the REASON block, the details lines
   // (6-2), the cards it stands for, and the Action slot with each option (command and then) and the
-  // reply line, verbatim (AD-34: chat and board match). Old cards fall back to card.commands.
-  import { clockTime, typeTag } from '../lib/model.ts';
+  // reply line, verbatim (AD-34: chat and board match). Old cards fall back to card.commands. A
+  // Gate card lists the artifacts it asks d2t to approve as file rows (6-3), each opening the
+  // Artifact drawer.
+  import { clockTime, gateFiles, laneKey, typeTag } from '../lib/model.ts';
   import type { BoardCard, Lane, NeedsYou } from '../lib/types.ts';
   import ActionSlot from './ActionSlot.svelte';
+  import ArtifactButton from './ArtifactButton.svelte';
   import SliceCard from './SliceCard.svelte';
   import StageCard from './StageCard.svelte';
 
@@ -13,6 +16,7 @@
   const label = $derived(needs.card.reason_label ? (needs.card.reason_label.endsWith(':') ? needs.card.reason_label : `${needs.card.reason_label}:`) : '');
   const stages = $derived(cards.filter((c) => c.kind === 'stage'));
   const slices = $derived(cards.filter((c) => c.kind === 'slice'));
+  const files = $derived(gateFiles(lane, needs));
 </script>
 
 <article class="needs-card" aria-label="{tag}: {needs.card.title}">
@@ -28,6 +32,9 @@
   {/if}
   {#if needs.card.details?.length}
     <div class="details">{#each needs.card.details as line, i (i)}<p>{line}</p>{/each}</div>
+  {/if}
+  {#if files.length}
+    <div class="files"><span class="lbl">FILES</span>{#each files as a (a.id)}<ArtifactButton lane={laneKey(lane)} artifact={a} from={`needs:${needs.ask_id}`} />{/each}</div>
   {/if}
   {#if stages.length}<div class="plates">{#each stages as c (c.id)}<StageCard {lane} card={c} {now} compact />{/each}</div>{/if}
   {#each slices as c (c.id)}<div class="plates"><SliceCard {lane} card={c} {now} compact /></div>{/each}
@@ -69,5 +76,7 @@
   .details { margin: -4px 0 10px; display: grid; gap: 2px; position: relative; }
   .details p { margin: 0; font: 13px/1.45 var(--sans); color: var(--needs-text-2); overflow-wrap: anywhere; }
   .lbl { display: block; font: 700 11px/1 var(--mono); letter-spacing: .1em; color: var(--needs-text-3); margin-bottom: 4px; }
+  .files { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; position: relative; }
+  .files .lbl { flex-basis: 100%; margin-bottom: 0; }
   .plates { display: grid; gap: 6px; margin: 0 0 10px; position: relative; }
 </style>

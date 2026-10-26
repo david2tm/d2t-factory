@@ -29,3 +29,7 @@
 - source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/6-2-cards-say-whats-next-intake-scope-optional-time-limit.md`
   summary: The agreed intake task and scope (and out-of-scope items) never reach the spec-writer, slicer or builders; briefs use the raw `factory start` task.
   evidence: `briefText` writes `task: ${state.task}` (src/cli/brief.ts) and no brief includes the intake out.md, so out-of-scope items the human settled at INTAKE are not passed to SPEC or SLICE PLAN. Pre-existing (the intake body never reached agents either); 6-2 only shows them on the confirm card.
+
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/6-3-claim-waiting-states-and-pinned-artifact-view.md`
+  summary: Drawer focus return is lost when a claim chip or artifact button inside the Decision drawer swaps the drawer's content and the drawer is then closed.
+  evidence: The in-drawer opener passes its own `data-src` (`srcId(...)`), and that element no longer exists after the swap, so `closeDrawer` (lib/drawer.ts) finds nothing to focus. The pattern predates 6-3 (the in-drawer ClaimChip); the fix is to carry the drawer's original `sel.src` through.

@@ -25,7 +25,7 @@ import { devserverDown } from './devserver.ts';
 import { currentBranch, head, insideRepo, mergeInto, repoHash, repoRoot, sha256, statusDigest } from './git.ts';
 import { consumeWith, embed, newestPrompt, supersede, type Prompt } from './prompt.ts';
 import { isRun, requireSession, resolveRun, type Resolution } from './resolve.ts';
-import { reissueEvent, type Ctx } from './steps.ts';
+import { artifactData, reissueEvent, type Ctx } from './steps.ts';
 
 const REASON: Partial<Record<ErrorCode, string>> = { NOT_FOUND: 'no_run', MISSING_EVIDENCE: 'missing_evidence' };
 
@@ -84,13 +84,16 @@ function build(p: Prompt, c: Ctx, run: LoadedRun, kind: DecisionKind, base: Reco
       const pin = pinOf(chat);
       if (!pin) refuse(p, 'ILLEGAL_TRANSITION', `intake_confirmed: step ${chat.id} has no reported intake`);
       if ('error' in pin) refuse(p, 'MISSING_EVIDENCE', `intake_confirmed: ${pin.error}`);
-      const parsed = checkOutput('intake', readFileSync(pin.path, 'utf8'));
+      const text = readFileSync(pin.path, 'utf8');
+      const parsed = checkOutput('intake', text);
       const v = parsed.ok ? validateIntake(parsed.front) : undefined;
       if (!v?.ok) refuse(p, 'MISSING_EVIDENCE', `intake_confirmed: ${pin.path} no longer parses`);
       const values = readRedactValues(c.hash, c.runId);
       const runStarted = run.commands.find((e) => e.kind === 'run_started')?.ts ?? state.last_ts!;
       const data = { ...base, intake: redact(v.value, values), clock_start: clockStart(runStarted, v.value.started), pins: [pin], evidence: [chat.id] };
-      return { data, answers: card, extra: (d) => [makeEvent(c.runId, 'step_verified', { step_id: chat.id, evidence: [d.id] }, { corr: chat.id })] };
+      // 6-3 (AD-23): the conversation's step_verified embeds the pinned intake for the board.
+      const artifact = artifactData(c, pin.path, text, pin.sha256);
+      return { data, answers: card, extra: (d) => [makeEvent(c.runId, 'step_verified', { step_id: chat.id, evidence: [d.id], ...(artifact ? { artifact } : {}) }, { corr: chat.id })] };
     }
 
     case 'cut_decided': {

@@ -3,7 +3,7 @@
   // line below it (6-2), and the card's reply line closing the slot. A card recorded before 6-2 has
   // no options: its commands are listed with no then lines. Copy is the board's only write, and it
   // writes to the clipboard. On failure the command text is selected and announced.
-  import { announce } from '../lib/announce.ts';
+  import { copyText } from '../lib/copy.ts';
   import { actionRows } from '../lib/model.ts';
   import type { Card } from '../lib/types.ts';
   import Glyph from './Glyph.svelte';
@@ -17,25 +17,10 @@
   const fields: HTMLElement[] = $state([]);
 
   async function copy(i: number): Promise<void> {
-    const text = rows[i].command;
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('no clipboard');
-      await navigator.clipboard.writeText(text);
-      copied = i;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { copied = -1; }, 1500);
-      announce('Copied', { urgent: true });
-    } catch {
-      const sel = window.getSelection();
-      const el = fields[i];
-      if (sel && el) {
-        const r = document.createRange();
-        r.selectNodeContents(el);
-        sel.removeAllRanges();
-        sel.addRange(r);
-      }
-      announce('Copy failed — command selected', { urgent: true });
-    }
+    if (!(await copyText(rows[i].command, fields[i], 'Copy failed — command selected'))) return;
+    copied = i;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { copied = -1; }, 1500);
   }
 </script>
 

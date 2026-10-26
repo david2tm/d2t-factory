@@ -3,10 +3,10 @@
 // SIGNAL LOST overlay (`live`) is added by the server at serve time and never cached.
 import { budgetOf, openCutAsk, timeboxView } from './budget.ts';
 import { HEARTBEAT_INTERVAL_MS, SIGNAL_LOST_MISSED } from './config.ts';
-import type { AnyEvent, Card, Stage } from './events.ts';
+import type { AnyEvent, ArtifactEmbed, Card, Stage } from './events.ts';
 import { isDecisionKind, TOOL_FACT_KINDS } from './events.ts';
 import { boardStage, fold, isTerminal, openSteps, type RunState, type SliceState, type Step } from './reducer.ts';
-import { claimOverlay, isParked, isVoided } from './verify.ts';
+import { claimOverlay, isIntakeChat, isParked, isVerified, isVoided, latestByRole, type WaitingOn } from './verify.ts';
 
 export type Column = 'backlog' | 'in_progress' | 'in_review' | 'needs_you' | 'done';
 export type TrackStatus = 'pending' | 'active' | 'waiting' | 'done';
@@ -20,7 +20,9 @@ export interface Claim {
   kind: string;
   state: 'claimed' | 'verified';
   reported_at: string;
-  overdue_at: string;
+  overdue_at: string | null; // null while it waits on the human or on checks (6-3): never overdue
+  waiting_on: WaitingOn | null;
+  waiting_for: string | null; // the card title, or the contract checks not yet verified (`health, test`)
   verdict?: string;
   superseded: boolean;
   evidence: EvidenceRow[];
@@ -45,7 +47,24 @@ export interface BoardCard {
   timebox_min?: number;
 }
 
-export interface NeedsYou { ask_id: string; raised_at: string | null; slice?: string; card: Card }
+// files (6-3): at a Gate 1 or Gate 2 card, the ids of the current artifacts its evidence names.
+export interface NeedsYou { ask_id: string; raised_at: string | null; slice?: string; card: Card; files?: string[] }
+
+// A gate-pinned artifact as its step_verified embedded it (6-3, AD-23). id: that event's id.
+// superseded: the step or that event is voided (AD-33). pinned_by: the first decision whose pins
+// hold this path and sha256.
+export interface ArtifactView {
+  id: string;
+  step_id: string;
+  stage: Stage;
+  name: string;
+  path: string;
+  sha256: string;
+  body: string;
+  truncated: boolean;
+  superseded: boolean;
+  pinned_by: string | null;
+}
 
 export interface Decision {
   id: string;
@@ -87,6 +106,7 @@ export interface Lane {
   cards: BoardCard[];
   needs_you: NeedsYou[];
   decisions: Decision[];
+  artifacts?: ArtifactView[]; // 6-3: absent when no step_verified embeds one (runs before 6-3)
   // 6-1: the Stop hook let the conductor's turn end through a recorded exit (stop_yielded: the human
   // rejected a tool call; stop_forced: the block cap), and nothing has happened in the run since.
   // Absent otherwise, so runs without stop facts project as before.
@@ -119,12 +139,13 @@ interface Trace {
   verified: Map<string, string[]>; // step id → its step_verified evidence ids
   raised: Map<string, string>; // ask id → ask_raised ts
   decisions: { e: AnyEvent; before: RunState }[];
+  artifacts: { id: string; step_id: string; artifact: ArtifactEmbed }[]; // step_verified embeds, in order (6-3)
 }
 
 // One fold for the whole run (apply() per command clones the state each time: quadratic); the
 // events it rejected are skipped, and a decision's `before` is the fold of the commands before it.
 function trace(commands: readonly AnyEvent[]): Trace {
-  const t: Trace = { started_at: null, issued: new Map(), reported: new Map(), verified: new Map(), raised: new Map(), decisions: [] };
+  const t: Trace = { started_at: null, issued: new Map(), reported: new Map(), verified: new Map(), raised: new Map(), decisions: [], artifacts: [] };
   const rejected = new Set(fold(commands).rejected.map((r) => r.id));
   for (let i = 0; i < commands.length; i++) {
     const e = commands[i];
@@ -134,12 +155,43 @@ function trace(commands: readonly AnyEvent[]): Trace {
       case 'step_issued': t.issued.set(e.id, e.ts); break;
       case 'step_reissued': t.issued.set(e.data.new, e.ts); break;
       case 'step_reported': t.reported.set(e.data.step_id, e.ts); break;
-      case 'step_verified': t.verified.set(e.data.step_id, e.data.evidence.filter((x): x is string => typeof x === 'string')); break;
+      case 'step_verified':
+        t.verified.set(e.data.step_id, e.data.evidence.filter((x): x is string => typeof x === 'string'));
+        if (isArtifact(e.data.artifact)) t.artifacts.push({ id: e.id, step_id: e.data.step_id, artifact: e.data.artifact });
+        break;
       case 'ask_raised': t.raised.set(e.id, e.ts); break;
       default: if (isDecisionKind(e.kind)) t.decisions.push({ e, before: fold(commands.slice(0, i)) });
     }
   }
   return t;
+}
+
+const isArtifact = (a: unknown): a is ArtifactEmbed => {
+  const x = a as Partial<ArtifactEmbed> | null | undefined;
+  return !!x && typeof x.path === 'string' && typeof x.sha256 === 'string' && typeof x.body === 'string';
+};
+
+const ARTIFACT_NAME: Record<string, string> = { 'spec-writer': 'spec.md', designer: 'design.md', slicer: 'plan.md' };
+const artifactName = (st: Step | undefined): string => (st && isIntakeChat(st) ? 'intake.md' : ARTIFACT_NAME[st?.role ?? ''] ?? 'out.md');
+
+function artifactViews(s: RunState, t: Trace): ArtifactView[] {
+  const pins = t.decisions.map(({ e }) => ({ id: e.id, pins: (e.data as { pins?: unknown }).pins }));
+  return t.artifacts.map(({ id, step_id, artifact: a }) => {
+    const st = s.steps[step_id] as Step | undefined;
+    const by = pins.find((d) => Array.isArray(d.pins) && d.pins.some((p) => (p as { path?: unknown })?.path === a.path && (p as { sha256?: unknown })?.sha256 === a.sha256));
+    return {
+      id, step_id, stage: st?.stage ?? 'INTAKE', name: artifactName(st), path: a.path, sha256: a.sha256, body: a.body, truncated: a.truncated === true,
+      superseded: isVoided(s, step_id) || isVoided(s, id), pinned_by: by?.id ?? null,
+    };
+  });
+}
+
+// A Gate card's files (6-3): the current artifacts its evidence names. Gate 1: the spec and the
+// design; Gate 2: the spec and the slicer's plan. Current: the role's newest step, verified, unvoided.
+function gateFiles(s: RunState, card: Card, artifacts: readonly ArtifactView[]): string[] {
+  const current = (role: string): Step | undefined => { const st = latestByRole(s, role); return isVerified(s, st) ? st : undefined; };
+  const steps = card.type === 'gate_1' ? [current('spec-writer'), current('designer')] : card.type === 'gate_2' ? [current('spec-writer'), current('slicer')] : [];
+  return steps.flatMap((st) => (st ? artifacts.filter((a) => a.step_id === st.id && !a.superseded).slice(-1).map((a) => a.id) : []));
 }
 
 function evidenceRows(ids: readonly string[], byId: Map<string, AnyEvent>): EvidenceRow[] {
@@ -216,6 +268,7 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
 
   // Needs You (AD-34): open escalations from state.asks, plus the open gate and merge cards (ask_human
   // steps; an escalation's own ask_human step repeats its ask, and intake is answered in the chat).
+  const artifacts = artifactViews(s, t);
   const needs: (NeedsYou & { stage?: Stage })[] = [];
   for (const a of Object.values(s.asks)) {
     if (!a.open) continue;
@@ -225,7 +278,8 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
   for (const st of openSteps(s)) {
     // The cut card's ask_human step repeats its ask, like an escalation's.
     if (st.kind !== 'ask_human' || !st.card || st.card.escalation || st.card.type === 'intake' || st.card.type === 'cut') continue;
-    needs.push({ ask_id: st.id, raised_at: t.issued.get(st.id) ?? null, stage: st.stage, card: st.card });
+    const files = gateFiles(s, st.card, artifacts);
+    needs.push({ ask_id: st.id, raised_at: t.issued.get(st.id) ?? null, stage: st.stage, card: st.card, ...(files.length ? { files } : {}) });
   }
   needs.sort((a, b) => (a.raised_at ?? '').localeCompare(b.raised_at ?? '') || a.ask_id.localeCompare(b.ask_id));
   const askedStages = new Set(needs.filter((n) => !n.slice && n.stage).map((n) => (n.stage === 'DESIGN' ? 'SPEC' : n.stage!)));
@@ -246,7 +300,8 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
     const card = st.slice ? sliceCard(st.slice) : st.stage === 'BUILD' ? null : stageCard(st.stage);
     if (!card) continue;
     const claim: Claim = {
-      step_id: id, role: st.role ?? st.check ?? st.kind, kind: st.kind, state: ov.state, reported_at: t.reported.get(id)!, overdue_at: ov.overdue_at!,
+      step_id: id, role: st.role ?? st.check ?? st.kind, kind: st.kind, state: ov.state, reported_at: t.reported.get(id)!, overdue_at: ov.overdue_at,
+      waiting_on: ov.waiting_on, waiting_for: ov.waiting_for,
       ...(st.verdict ? { verdict: st.verdict } : {}), superseded: isVoided(s, id) || st.state === 'reissued' || st.state === 'cancelled', evidence: evidenceRows(ov.evidence, byId),
     };
     claimsOf.set(card, [...(claimsOf.get(card) ?? []), claim]);
@@ -303,7 +358,7 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
   for (const e of loaded.facts) if (!last || e.ts > last) last = e.ts;
   const terminal = isTerminal(s);
   const working = !terminal && !parked;
-  const openClaims = cards.flatMap((c) => c.claims).filter((c) => c.state === 'claimed' && !c.superseded).map((c) => c.overdue_at).sort();
+  const openClaims = cards.flatMap((c) => c.claims).filter((c) => c.state === 'claimed' && !c.superseded).map((c) => c.overdue_at).filter((x): x is string => x !== null).sort();
   const phaseAt = (p: RunState['phase']): number => ['INTAKE', 'ORIENT', 'SCAFFOLD', 'SPEC_DESIGN', 'SLICE_PLAN', 'BUILD', 'WRAP', 'MERGED', 'COMPLETED'].indexOf(p);
   const reached = phaseAt(s.phase === 'ABANDONED' ? (s.abandoned_from ?? 'INTAKE') : s.phase);
   const b = budgetOf(s);
@@ -327,6 +382,7 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
     cards,
     needs_you: needs.map(({ stage: _stage, ...n }) => n),
     decisions,
+    ...(artifacts.length ? { artifacts } : {}),
     ...(paused ? { paused } : {}),
   };
 }

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { AnyEvent } from '../src/core/events.ts';
 import { apply, fold, type RunState, type Step } from '../src/core/reducer.ts';
 import {
-  agentEvidence, classifyOrphan, closeEvidence, designerRequired, designMode, designQuestionAnswered, dueReviewers, gateEvidence, isVerified, latestDesign, latestSlicePlan, latestSpec,
+  agentEvidence, claimOverlay, classifyOrphan, closeEvidence, designerRequired, designMode, designQuestionAnswered, dueReviewers, gateEvidence, isVerified, latestDesign, latestSlicePlan, latestSpec,
   mergeEvidence, readyDesign, reworkVoids, roundFailure, roundNext, roundOf, sliceReworkVoids, sliceVerdicts, uiReference,
   evidenceState, isParked, latestByRole, liveSlices, rerunVoids, sliceDeps, wantsBuilder,
 } from '../src/core/verify.ts';
@@ -463,4 +463,63 @@ test('isParked (3-4): every open step is a card or the subject of an open ask', 
   w.put('ask_raised', { card: { type: 'escalation', title: 'x', commands: [] }, step_id: b, slice: 'S1', escalation: 'E1' });
   w.put('step_issued', { kind: 'ask_human', stage: 'BUILD', attempt: 1, card: { type: 'escalation', title: 'x', commands: [], escalation: 'E1' } });
   assert.equal(isParked(w.s), true);
+});
+
+// 6-3 (AD-7): what a reported claim waits on. A run built step by step with real ISO timestamps.
+function waitState() {
+  let i = 0;
+  let s = fold([{ v: 1, id: 'A', ts: '2026-10-24T10:00:00.000Z', run: 'r', kind: 'run_started', actor: 'cli', corr: '', data: { task: 't', repo_hash: 'h', base_sha: 'b', branch: 'x' } } as AnyEvent]);
+  const put = (kind: string, data: object, extra: object = {}): string => {
+    const id = `W${++i}`;
+    const r = apply(s, { v: 1, id, ts: '2026-10-24T10:00:00.000Z', run: 'r', session: 'S', kind, actor: 'cli', corr: '', data, ...extra } as AnyEvent);
+    assert.ok(r.ok, r.reason);
+    s = r.state;
+    return id;
+  };
+  const reported = (data: object, output: object): string => {
+    const id = put('step_issued', data);
+    put('step_claimed', { step_id: id });
+    put('step_reported', { step_id: id, output });
+    return id;
+  };
+  return { get s() { return s; }, put, reported };
+}
+
+test('claimOverlay (6-3): a claim waiting on Master d2t or on checks is CLAIMED with what it waits on and no overdue_at; only hook facts go overdue', () => {
+  const T = '2026-10-24T10:00:00.000Z';
+  const w = waitState();
+  const ov = (id: string) => claimOverlay(w.s, w.s.steps[id], T);
+
+  // Intake waits: the conversation step reported, no approval yet.
+  const chat = w.reported({ kind: 'ask_human', stage: 'INTAKE', attempt: 1, card: { type: 'intake', title: 'Intake — agree the task with the human', commands: [] } }, { status: 'DONE', sha256: 'i1' });
+  assert.deepEqual(ov(chat), { state: 'claimed', overdue_at: null, waiting_on: 'human', waiting_for: 'Intake — agree the task with the human', evidence: [] });
+
+  // Hook facts only: a spawn reported, no subagent_stopped: UNVERIFIED at report + 30 s, as before.
+  const recon = w.reported({ kind: 'spawn', stage: 'RECON', attempt: 1, role: 'recon' }, { status: 'DONE' });
+  assert.deepEqual(ov(recon), { state: 'claimed', overdue_at: '2026-10-24T10:00:30.000Z', waiting_on: null, waiting_for: null, evidence: [] });
+
+  // Checks running: the scaffolder reported DONE, through every gap of the SCAFFOLD schedule.
+  const sc = w.reported({ kind: 'spawn', stage: 'SCAFFOLD', attempt: 1, role: 'scaffolder' }, { status: 'DONE' });
+  assert.deepEqual([ov(sc).waiting_on, ov(sc).waiting_for, ov(sc).overdue_at], ['checks', 'install, health, test', null], 'before install is issued');
+  const install = w.put('step_issued', { kind: 'run_check', stage: 'SCAFFOLD', attempt: 1, check: 'contract.install' });
+  w.put('step_claimed', { step_id: install });
+  assert.equal(ov(sc).waiting_for, 'install, health, test');
+  const ck = w.put('check_ran', { check: 'contract.install', exit_code: 0, duration_ms: 1, basis_seq: 1 });
+  w.put('step_reported', { step_id: install, output: { check_id: ck, exit_code: 0 } });
+  w.put('step_verified', { step_id: install, evidence: [ck] });
+  assert.deepEqual([ov(sc).state, ov(sc).waiting_on, ov(sc).waiting_for, ov(sc).overdue_at], ['claimed', 'checks', 'health, test', null], 'install verified, health and test pending');
+  // A failing scaffolder (or one escalated) waits on the human instead, with its card's title.
+  w.put('ask_raised', { card: { type: 'scaffold_failure', title: 'SCAFFOLD failed', commands: [] }, step_id: sc, escalation: 'E1' });
+  assert.deepEqual([ov(sc).waiting_on, ov(sc).waiting_for, ov(sc).overdue_at], ['human', 'SCAFFOLD failed', null]);
+  // The verified claim neither waits nor loses its overdue_at.
+  w.put('step_verified', { step_id: sc, evidence: [] });
+  assert.deepEqual([ov(sc).state, ov(sc).waiting_on, ov(sc).overdue_at], ['verified', null, '2026-10-24T10:00:30.000Z']);
+
+  // Escalation: a builder's ESCALATE with its escalation ask open.
+  const b = w.reported({ kind: 'spawn', stage: 'BUILD', attempt: 1, role: 'builder' }, { status: 'ESCALATE' });
+  assert.equal(ov(b).waiting_on, null, 'before the ask is raised it waits on its facts');
+  w.put('ask_raised', { card: { type: 'escalation', title: 'Builder stuck on S1', commands: [] }, step_id: b, escalation: 'E2' });
+  assert.deepEqual(ov(b), { state: 'claimed', overdue_at: null, waiting_on: 'human', waiting_for: 'Builder stuck on S1', evidence: [] });
+  // Not reported: no claim at all.
+  assert.deepEqual(claimOverlay(w.s, w.s.steps[b], undefined), { state: null, overdue_at: null, waiting_on: null, waiting_for: null, evidence: [] });
 });

@@ -142,3 +142,59 @@ test('a settings file that cannot be written fails with SETUP_FAILED and stays u
     chmodSync(dir, 0o755);
   }
 });
+
+// 6-3 (AD-23): the artifact embed. Its body is redacted with the run's values, then cut to
+// ARTIFACT_EMBED_MAX bytes on a UTF-8 boundary; its sha256 is the reported one, or there is no embed;
+// and the step_verified carrying the largest body still fits one line.
+test('artifactData: redacted, capped on a UTF-8 boundary, pinned to the reported sha256; its event fits MAX_LINE_BYTES', async () => {
+  const { ARTIFACT_EMBED_MAX, MAX_LINE_BYTES } = await import('../src/core/config.ts');
+  const { artifactData, capUtf8, verifiedEvent } = await import('../src/cli/steps.ts');
+  const { serialize } = await import('../src/store/jsonl.ts');
+  const { redactFile } = await import('../src/store/paths.ts');
+  const { createHash } = await import('node:crypto');
+  const sha = (t: string): string => createHash('sha256').update(t).digest('hex');
+  const home = mkdtempSync(join(tmpdir(), 'factory-embed-'));
+  const prev = process.env.FACTORY_HOME;
+  process.env.FACTORY_HOME = home;
+  try {
+    const c = { hash: 'aaaaaaaaaaaa', runId: 'r-embed', session: 's', root: home };
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(redactFile(c.hash, c.runId), '..'), { recursive: true });
+    writeFileSync(redactFile(c.hash, c.runId), JSON.stringify({ values: ['hunter2-is-the-secret'] }));
+
+    // Secret in spec: [REDACTED] in the body, the sha256 the step reported (of the raw bytes).
+    const spec = 'STATUS: DONE\n# Footer\nAPI_TOKEN=hunter2-is-the-secret\n';
+    assert.deepEqual(artifactData(c, '/h/out.md', spec, sha(spec)), { path: '/h/out.md', sha256: sha(spec), body: 'STATUS: DONE\n# Footer\nAPI_TOKEN=[REDACTED]\n', truncated: false });
+    assert.equal(artifactData(c, '/h/out.md', spec, sha('other bytes')), undefined, 'the file changed since it was reported: no embed');
+    assert.equal(artifactData(c, '/h/out.md', null, sha(spec)), undefined, 'no file: no embed');
+
+    // UTF-8 boundary: a 3-byte character is never split.
+    assert.deepEqual(capUtf8('ab€cd', 4), { text: 'ab', truncated: true });
+    assert.deepEqual(capUtf8('ab€cd', 5), { text: 'ab€', truncated: true });
+    assert.deepEqual(capUtf8('ab€cd', 7), { text: 'ab€cd', truncated: false });
+
+    // Over cap: quotes, newlines and multi-byte text past ARTIFACT_EMBED_MAX.
+    const big = `STATUS: DONE\n${'"quoted" line — ünïcödé\n'.repeat(4000)}`;
+    assert.ok(Buffer.byteLength(big) > ARTIFACT_EMBED_MAX);
+    const a = artifactData(c, '/h/out.md', big, sha(big))!;
+    assert.equal(a.truncated, true);
+    assert.ok(Buffer.byteLength(a.body) <= ARTIFACT_EMBED_MAX && Buffer.byteLength(a.body) > ARTIFACT_EMBED_MAX - 4);
+    assert.ok(big.startsWith(a.body));
+    const st = { id: '01JQ0000000000000000000001', kind: 'spawn', stage: 'SPEC', attempt: 1, state: 'reported', role: 'spec-writer', output_path: '/h/out.md', output: { sha256: sha(big) }, issued_seq: 1 } as const;
+    const e = verifiedEvent(c, st as never, ['f1', 'f2'], 'DONE', { path: '/h/out.md', real: '/h/out.md', text: big, sha256: sha(big), result: { ok: false, error: 'unused' } } as never);
+    const line = serialize(e);
+    assert.ok(Buffer.byteLength(line) + 1 <= MAX_LINE_BYTES, `${Buffer.byteLength(line)} bytes`);
+    assert.deepEqual(JSON.parse(line).data.artifact, a, 'the body fits without the line cap cutting it');
+    // The file changed after the report: the re-read bytes no longer hash to the reported sha256.
+    const changed = 'STATUS: DONE\n# edited after the report\n';
+    const stale = verifiedEvent(c, st as never, [], 'DONE', { path: '/h/out.md', real: '/h/out.md', text: changed, sha256: sha(changed), result: { ok: false, error: 'unused' } } as never);
+    assert.equal((stale.data as { artifact?: unknown }).artifact, undefined);
+    // A step with no reported sha256 embeds nothing either.
+    const unreported = verifiedEvent(c, { ...st, output: {} } as never, [], 'DONE', { path: '/h/out.md', real: '/h/out.md', text: big, sha256: sha(big), result: { ok: false, error: 'unused' } } as never);
+    assert.equal((unreported.data as { artifact?: unknown }).artifact, undefined);
+    // Other roles embed nothing.
+    assert.equal((verifiedEvent(c, { ...st, role: 'builder' } as never, [], 'DONE', { path: '/h/out.md', text: big, sha256: sha(big) } as never).data as { artifact?: unknown }).artifact, undefined);
+  } finally {
+    if (prev === undefined) delete process.env.FACTORY_HOME; else process.env.FACTORY_HOME = prev;
+  }
+});

@@ -393,8 +393,9 @@ function stepEvents(c: Ctx, run: LoadedRun, st: Step, ctx: ScheduleCtx, cwd: str
   // A report waiting for its facts (async hooks).
   const status = st.output?.status;
   if (isAgent(st) && st.state === 'reported' && st.role !== 'scaffolder' && typeof status === 'string' && status !== 'ESCALATE' && !askOpenFor(state, st.id)) {
-    const ev = evidenceFor(run, st, readOutput(state, st));
-    if (ev.ok) return [verifiedEvent(c, st, ev.evidence, status)];
+    const out = readOutput(state, st);
+    const ev = evidenceFor(run, st, out);
+    if (ev.ok) return [verifiedEvent(c, st, ev.evidence, status, out)];
   }
   return [];
 }
@@ -457,9 +458,10 @@ function issueDue(c: Ctx, run: LoadedRun, state: RunState, ctx: ScheduleCtx): Ru
 }
 
 // With nothing to issue but work or cards in flight, the conductor sleeps (a background
-// `next --wait`, AD-17) until the next deadline: the cut point, the earliest overdue_at of an agent
-// report still waiting for its facts, or (3-4) a live slice's time box end. With only cards in flight
-// (ask_human: the human's turn) and no deadline ahead there is no wait: the conductor ends its turn.
+// `next --wait`, AD-17) until the next deadline: the cut point, the earliest overdue_at of a claim
+// waiting on nothing but its hook facts (claimOverlay, the board's own rule, 6-3), or (3-4) a live
+// slice's time box end. With only cards in flight (ask_human: the human's turn) and no deadline ahead
+// there is no wait: the conductor ends its turn.
 function view(state: RunState, commands: readonly AnyEvent[]): NextOut {
   const open = openSteps(state);
   const steps = open.filter((st) => st.state === 'issued').map((st) => stepView(st, state));
@@ -467,8 +469,8 @@ function view(state: RunState, commands: readonly AnyEvent[]): NextOut {
   if (steps.length || !in_flight.length) return { steps, in_flight };
   const reportedAt = new Map<string, string>();
   for (const e of commands) if (e.kind === 'step_reported') reportedAt.set(e.data.step_id, e.ts);
-  const overdue = open.filter((st) => st.state === 'reported' && (st.kind === 'spawn' || st.kind === 'resume') && !askOpenFor(state, st.id))
-    .map((st) => claimOverlay(state, st, reportedAt.get(st.id)).overdue_at).filter((x): x is string => x !== null);
+  const overdue = open.map((st) => claimOverlay(state, st, reportedAt.get(st.id)))
+    .filter((ov) => ov.state === 'claimed' && ov.waiting_on === null).map((ov) => ov.overdue_at).filter((x): x is string => x !== null);
   const now = Date.now();
   const timeboxes = state.phase === 'BUILD'
     ? liveSlices(state).filter((sl) => sl.state !== 'ESCALATED').map((sl) => sliceTimebox(state, commands, sl.id, now)?.ends_at).filter((x): x is string => typeof x === 'string')

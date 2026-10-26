@@ -1,9 +1,10 @@
 <script lang="ts">
   // A Claim chip: CLAIMED (holo), VERIFIED (gold), UNVERIFIED (danger) or SUPERSEDED (dimmed).
   // Its state compares the claim's overdue_at with the browser clock; activating it opens the
-  // Evidence drawer (Claim).
+  // Evidence drawer (Claim). A CLAIMED chip waiting on Master d2t or on checks (6-3) carries a gloss
+  // in holo-text-2: `· awaiting Master d2t`, `· checks running`.
   import { eventAnim } from '../lib/motion.ts';
-  import { CHIP_WORD, chipState, displayName } from '../lib/model.ts';
+  import { CHIP_WORD, chipGloss, chipState, displayName } from '../lib/model.ts';
   import { openDrawer, selection, srcId } from '../lib/drawer.ts';
   import type { Claim } from '../lib/types.ts';
   import Glyph from './Glyph.svelte';
@@ -12,7 +13,7 @@
 
   const state = $derived(chipState(claim, now));
   const word = $derived(CHIP_WORD[state]);
-  const gloss = $derived(state === 'unverified' ? '· no hook fact' : '');
+  const gloss = $derived(chipGloss(claim, state));
   const src = $derived(srcId(lane, card, claim.step_id));
   const selected = $derived($selection?.kind === 'claim' && $selection.src === src);
   const label = $derived(`${displayName(claim.role)}: ${word}${gloss ? ` ${gloss}` : ''}. Open evidence`);
@@ -45,7 +46,7 @@
     box-shadow: 0 0 10px color-mix(in srgb, var(--holo) 20%, transparent);
     animation: flicker 3.2s infinite;
   }
-  .claimed em { color: var(--holo-text-3); }
+  .claimed em { color: var(--holo-text-2); }
 
   .verified {
     color: var(--gold-ink); background: linear-gradient(180deg, var(--gold-hi), var(--gold));

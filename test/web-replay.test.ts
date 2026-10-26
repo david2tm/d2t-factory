@@ -332,3 +332,27 @@ test('playback: loading → opened paused at the start; play, 16× is fast, the 
   pb.toggle();
   assert.equal(get(pb.playing), false, 'nothing plays without a recording');
 });
+
+test('artifact bodies (6-3): frames carry artifacts without a body, each body sits once in artifact_bodies, and boardAt joins them back; an artifact selection follows the playhead', () => {
+  const r = loaded('happy-path');
+  const run = r.runs[0].loaded;
+  const spec = run.commands.find((e) => e.kind === 'step_issued' && (e.data as { role?: string }).role === 'spec-writer')!;
+  const verified = run.commands.find((e) => e.kind === 'step_verified' && (e.data as { step_id: string }).step_id === spec.id)!;
+  const body = '# Footer\nAPI_TOKEN=[REDACTED]\n';
+  const commands = run.commands.map((e) => (e.id === verified.id ? { ...e, data: { ...e.data, artifact: { path: '/h/spec/out.md', sha256: 's1', body, truncated: false } } } : e)) as AnyEvent[];
+  const t = buildTimeline(r.manifest, [{ ...r.runs[0], loaded: { ...run, state: fold(commands), commands } }]);
+  assert.deepEqual(t.artifact_bodies, { [verified.id]: body });
+  const framed = t.frames.flatMap((f) => f.artifacts ?? []);
+  assert.ok(framed.length > 0 && framed.every((a) => !('body' in a)), 'no body in any frame');
+  assert.equal(buildTimeline(r.manifest, r.runs).artifact_bodies, undefined, 'absent when no artifact is embedded');
+
+  const rec = asWeb(t);
+  const end = ms(rec.end);
+  const [lane] = boardAt(rec, end);
+  const live = projectRun({ state: fold(commands), commands, facts: run.facts, skipped: run.skipped }, { repo_hash: r.runs[0].repo_hash, run_id: r.runs[0].run_id });
+  assert.deepEqual(lane.artifacts, json(live.artifacts), 'the joined lane carries what the live board serves');
+  assert.equal(lane.artifacts![0].body, body);
+  const sel: Selection = { kind: 'artifact', lane: laneKey(lane), card: 'stage:SPEC', artifact: verified.id, src: 'x' };
+  assert.equal(selectionPresent(sel, boardAt(rec, end)), true);
+  assert.equal(selectionPresent(sel, boardAt(rec, ms(verified.ts) - 1)), false, 'before its step_verified the artifact is not on the board');
+});

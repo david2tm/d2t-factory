@@ -3,9 +3,9 @@
 import { readFileSync } from 'node:fs';
 import { checkOutput, originOf, type AgentOutput, type OutputOpts } from '../core/artifacts.ts';
 import { escalationCard, scaffoldFailureCard, stepNonConvergenceCard } from '../core/cards.ts';
-import { MAX_STEP_ATTEMPTS } from '../core/config.ts';
-import type { AnyEvent, Card, Envelope } from '../core/events.ts';
-import { redact } from '../core/redact.ts';
+import { ARTIFACT_EMBED_MAX, MAX_STEP_ATTEMPTS } from '../core/config.ts';
+import type { AnyEvent, ArtifactEmbed, Card, Envelope } from '../core/events.ts';
+import { redact, redactString } from '../core/redact.ts';
 import type { RunState, Step } from '../core/reducer.ts';
 import type { AgentEvidence } from '../core/verify.ts';
 import { agentEvidence, designMode, designQuestionAnswered } from '../core/verify.ts';
@@ -131,14 +131,43 @@ export function reportEvents(c: Ctx, state: RunState, st: Step, out: ReadOutput,
     // A builder's or reviewer's escalation parks its slice (ESCALATED) until the ruling.
     events.push(raise(c, state, st, (e) => escalationCard({ escalation: e, label: r.escalation!.label, line: r.escalation!.line, role: st.role }), st.slice));
   } else if (st.role !== 'scaffolder' && o.evidence.ok) {
-    events.push(verifiedEvent(c, st, o.evidence.evidence, r.status));
+    // The sha256 this batch's step_reported carries (projection(): out.sha256) is the reported one.
+    events.push(verifiedEvent(c, st, o.evidence.evidence, r.status, out, out.sha256));
   }
   return events;
 }
 
-// step_verified for an agent step; a reviewer's carries its VERDICT (the reducer's FINDINGS edge).
-export function verifiedEvent(c: Ctx, st: Step, evidence: string[], status: unknown): AnyEvent {
-  return makeEvent(c.runId, 'step_verified', { step_id: st.id, evidence, ...(isReviewer(st) && typeof status === 'string' ? { verdict: status } : {}) }, { corr: st.id });
+// The roles whose output a gate pins (AD-23); the INTAKE conversation's out.md is the fourth, embedded
+// at intake_confirmed (decide.ts).
+const ARTIFACT_ROLES: readonly string[] = ['spec-writer', 'designer', 'slicer'];
+
+// `text` cut to at most `max` UTF-8 bytes, never inside a character.
+export function capUtf8(text: string, max: number): { text: string; truncated: boolean } {
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.length <= max) return { text, truncated: false };
+  let end = max;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return { text: buf.subarray(0, end).toString('utf8'), truncated: true };
+}
+
+// What step_verified embeds for a gate-pinned artifact (6-3, AD-23): the bytes read now, only while
+// they still hash to the sha256 the step reported (what the gates pin); the body redacted with the
+// run's values (AD-14), then cut to ARTIFACT_EMBED_MAX bytes.
+export function artifactData(c: Ctx, path: string, text: string | null, reportedSha: unknown): ArtifactEmbed | undefined {
+  if (text === null || typeof reportedSha !== 'string' || sha256(text) !== reportedSha) return undefined;
+  const body = capUtf8(redactString(text, readRedactValues(c.hash, c.runId)), ARTIFACT_EMBED_MAX);
+  return { path, sha256: reportedSha, body: body.text, truncated: body.truncated };
+}
+
+// step_verified for an agent step; a reviewer's carries its VERDICT (the reducer's FINDINGS edge). A
+// spec-writer's, designer's or slicer's embeds its output (`out`, read for this verify) as an artifact,
+// only while those bytes hash to the sha256 the step reported (`reportedSha`: the step's recorded
+// output, or the one its step_reported in the same batch carries).
+export function verifiedEvent(c: Ctx, st: Step, evidence: string[], status: unknown, out?: ReadOutput, reportedSha: unknown = st.output?.sha256): AnyEvent {
+  const artifact = out && st.role && ARTIFACT_ROLES.includes(st.role) ? artifactData(c, out.path, out.text, reportedSha) : undefined;
+  return makeEvent(c.runId, 'step_verified', {
+    step_id: st.id, evidence, ...(isReviewer(st) && typeof status === 'string' ? { verdict: status } : {}), ...(artifact ? { artifact } : {}),
+  }, { corr: st.id });
 }
 
 // step_reissued with a fresh step id, output path and (for agents) brief. The reducer copies the old

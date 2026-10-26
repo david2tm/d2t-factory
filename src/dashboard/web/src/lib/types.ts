@@ -30,7 +30,9 @@ export interface Claim {
   kind: string;
   state: 'claimed' | 'verified';
   reported_at: string;
-  overdue_at: string;
+  overdue_at: string | null; // null while it waits on Master d2t or on checks: never overdue (6-3)
+  waiting_on: 'human' | 'checks' | null;
+  waiting_for: string | null; // the card title, or the contract checks not yet verified
   verdict?: string;
   superseded: boolean;
   evidence: EvidenceRow[];
@@ -53,7 +55,21 @@ export interface BoardCard {
   timebox_min?: number;
 }
 
-export interface NeedsYou { ask_id: string; raised_at: string | null; slice?: string; card: Card }
+export interface NeedsYou { ask_id: string; raised_at: string | null; slice?: string; card: Card; files?: string[] } // files: artifact ids (Gate 1, Gate 2)
+
+// A gate-pinned artifact (6-3): the redacted bytes its step_verified embedded, never a file read.
+export interface ArtifactView {
+  id: string; // the step_verified event id
+  step_id: string;
+  stage: Stage;
+  name: string; // intake.md, spec.md, design.md, plan.md
+  path: string;
+  sha256: string;
+  body: string;
+  truncated: boolean;
+  superseded: boolean;
+  pinned_by: string | null; // a decision id, into lane.decisions
+}
 
 export interface Decision {
   id: string;
@@ -93,6 +109,7 @@ export interface Lane {
   cards: BoardCard[];
   needs_you: NeedsYou[];
   decisions: Decision[];
+  artifacts?: ArtifactView[]; // 6-3: absent when the run embedded none
   paused?: Paused; // 6-1: the conductor's turn ended through a recorded Stop exit, and nothing has happened since
   live?: { signal_lost: boolean };
 }
@@ -105,7 +122,10 @@ export interface Board { runs: Lane[] }
 export interface Snapshot { cursor: number; projection: Board }
 
 // GET /api/recordings/<name> (4-1, a copy of src/core/timeline.ts Timeline): every event in replay
-// order with its run's post-event lane (a frame, with last_event_at and signal_lost_at blanked).
+// order with its run's post-event lane (a frame, with last_event_at and signal_lost_at blanked). A
+// frame's artifacts carry no body: each body sits once in artifact_bodies (6-3), joined back by id.
+export type FrameArtifact = Omit<ArtifactView, 'body'>;
+export type Frame = Omit<Lane, 'artifacts'> & { artifacts?: FrameArtifact[] };
 export interface RecordingEvent { id: string; kind: string; at: string; run: number; decision: boolean; frame: number }
 export interface RecordingRun { repo_hash: string; run_id: string; signal_lost_card: Card }
 export interface Recording {
@@ -116,5 +136,6 @@ export interface Recording {
   signal_lost_ms: number;
   runs: RecordingRun[];
   events: RecordingEvent[];
-  frames: Lane[];
+  frames: Frame[];
+  artifact_bodies?: Record<string, string>;
 }
