@@ -260,7 +260,7 @@ flowchart BT
     - **Synchronous:** `UserPromptSubmit`, `UserPromptExpansion`, `Stop`, `SessionStart`, and `PreToolUse` (the guard, AD-31).
     - **`async: true`:** `SubagentStart`, `SubagentStop`, `PostToolUse`, `PostToolUseFailure`, `SessionEnd`.
   - **Invocation.** Every hook is exec-form: `${CLAUDE_PLUGIN_ROOT}/bin/factory` with args `["hook", "<event>"]`.
-  - **Non-factory sessions.** Every hook resolves `session_id` → run first. For unbound sessions it exits 0 with no output. The prompt hooks are the exception: they always write `/factory` prompts to the inbox.
+  - **Non-factory sessions.** Every hook resolves `session_id` → run first. For unbound sessions it exits 0 with no output. The prompt hooks are the exception: they always write `/factory` prompts to the inbox. So is the guard's sandbox-flag deny in a session with an unconsumed `/factory` prompt (AD-31).
   - **Failures.** Exceptions exit 0 and append to `~/.factory/hook-errors.log`. No hook ever exits 2, except the Stop block (AD-12) and the guard's deny (AD-31).
   - **Speed.** Fact hooks do a single append and never call git.
 
@@ -291,6 +291,7 @@ flowchart BT
   - **Why not `~/.factory` (spike 01).** `EnterWorktree` on a path outside `.claude/worktrees/` prompts every time, whatever the allow rules say, and can't enter a second such worktree from inside one. The in-repo placement entered with zero prompts, both fresh and after `/clear`, and left `git status` clean.
   - **Factory artifacts still live under `~/.factory` (AD-10).** Only the git worktree is in the repo.
   - **Shared mutable service.** If the run contract lists one, the run claims `<repo-hash>/exclusive/` by `mkdir` at SCAFFOLD. `factory start` refuses with `REFUSED_EXCLUSIVE` while the claim is held by a run that isn't terminal.
+    - **Known limit (accepted, 5-1).** A run's scaffolder and SCAFFOLD checks touch the shared service before its own claim settles. Since `start` refuses while the claim is held (`src/cli/start.ts`), the only gap is two runs started at the same moment on a shared DB. It is not closed.
 ### AD-16 — The dashboard is a read-only singleton projection
 
 - **Binds:** CAP-15, CAP-16
@@ -345,8 +346,7 @@ flowchart BT
   - **No runtime dependencies.** `src/core`, `src/store`, `src/cli`, `src/hooks`, `src/replay` and `src/dashboard/server` use only Node built-ins, run with native type stripping.
   - **Dashboard build.**
     - Only `src/dashboard/web` has npm dependencies. Its `package.json` and lockfile live there, never at the plugin root.
-    - `dashboard/dist/` is committed.
-    - If it is missing, the fallback build writes to the plugin data directory.
+    - `dashboard/dist/` is committed and ships with the plugin. A test fails when `dashboard/dist/index.html` is missing. There is no fallback build (dropped; see Overrides).
   - **Paths and environment.**
     - The CLI finds the plugin root from the realpath of `bin/factory`.
     - It reads the data directory and `userConfig` from `~/.factory/plugin-env.json`, which every `SessionStart` hook rewrites.
@@ -523,7 +523,8 @@ flowchart BT
   - **The guard.** A synchronous `PreToolUse` guard runs only in factory-bound sessions. It denies a `Write`, `Edit` or `Bash` that writes under `~/.factory/` or `~/.claude/projects/`, with two exceptions:
     - writes into the `artifacts/steps/<step_id>/` of any step currently claimed in the bound run;
     - `factory …` invocations from the conductor (no `agent_id` in the hook input). The guard denies `factory` calls from subagents.
-  - It also denies, in a bound session, a `Bash` call with `dangerouslyDisableSandbox: true`, from the conductor or an agent (AD-35). The flag is in the hook input; with no sandbox it is a no-op, so the denial costs nothing.
+  - It also denies, in a bound session, any tool call with `dangerouslyDisableSandbox: true` that the `PreToolUse` matcher routes to it (Bash, Monitor, PowerShell and the write tools; a new tool that takes the flag is added to the matcher), from the conductor or an agent (AD-35). The flag is in the hook input; with no sandbox it is a no-op, so the denial costs nothing.
+  - **Before binding.** A session that is not bound yet but has an unconsumed `/factory` prompt in its inbox (the conductor's `factory decide`/`start` calls) gets only that sandbox-flag denial; nothing else is checked or changed. A session with neither a binding nor a pending prompt is untouched (AD-13).
   - **Closing the known gaps (spike 0-1 review E4–E6).** These are cheap to close, so the tripwire closes them:
     - **Case.** On a case-insensitive volume (macOS default APFS), both sides are case-folded before the prefix match, so `~/.Factory/` matches.
     - **Symlinks.** A path is resolved by `realpath` of its deepest existing ancestor, and a symlink leaf is followed with `readlink` even when its target doesn't exist. Lexical resolution is never used, so a dangling link into `~/.factory/` is caught.
@@ -751,6 +752,7 @@ d2t-factory/                      # plugin root
 | EXPERIENCE: test evidence "verified by hook" | Cites the CLI's `check_ran`. A hook-observed test run is "supporting" (AD-7) |
 | EXPERIENCE: run ID `r-7f3a` | `<slug>-<base32×4>` (AD-9) |
 | EXPERIENCE: Decision drawer `terminal response` | The `prompt_text` verbatim (AD-6) |
+| AD-16 / AD-19 (earlier draft): a fallback build into the plugin data directory when `dashboard/dist` is missing | `dashboard/dist` ships with the plugin, and a test fails when `dashboard/dist/index.html` is missing. The fallback is dropped |
 
 ## Open Questions
 

@@ -23,3 +23,12 @@ test('dashboard/dist matches a fresh build of src/dashboard/web', SKIP, (t) => {
   assert.deepEqual(files(DIST), files(out), 'the same files (rebuild with `npm run build` in src/dashboard/web)');
   for (const f of files(out)) assert.ok(readFileSync(join(DIST, f)).equals(readFileSync(join(out, f))), `${f} differs from a fresh build`);
 });
+
+// AD-16: dist ships with the plugin and there is no fallback build, so it must be there (no vite needed).
+test('dashboard/dist/index.html ships with the plugin (no fallback build)', () => {
+  assert.ok(existsSync(join(DIST, 'index.html')), 'dashboard/dist/index.html is missing: run `npm run build` in src/dashboard/web and commit it');
+  const html = readFileSync(join(DIST, 'index.html'), 'utf8');
+  const assets = [...html.matchAll(/(?:src|href)="\/(assets\/[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(assets.length > 0, 'index.html names its assets under /assets/');
+  for (const a of assets) assert.ok(existsSync(join(DIST, a)), `${a} named by index.html is missing`);
+});
