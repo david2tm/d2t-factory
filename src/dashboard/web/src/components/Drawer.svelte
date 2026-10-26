@@ -36,7 +36,7 @@
   // The decision that pinned the artifact opens in this drawer, from the card it sealed.
   function openPin(id: string): void {
     const c = lane?.cards.find((x) => x.seals.includes(id));
-    if (c) openDrawer({ kind: 'decision', lane: sel.lane, card: c.id, decision: id, deck: false, src: sel.src });
+    if (c) openDrawer({ kind: 'decision', lane: sel.lane, card: c.id, decision: id, deck: false, src: sel.src }, { inDrawer: true });
   }
 
   let heading: HTMLElement | undefined = $state();
@@ -156,7 +156,7 @@
             {@const ev = evidenceOf(id)}
             {@const art = artifactFor(lane, id)}
             {#if ev}
-              <span class="evrow">{displayName(ev.claim.role)} <ClaimChip lane={sel.lane} card={ev.cardId} claim={ev.claim} {now} mini />{#if art}<ArtifactButton lane={sel.lane} artifact={art} from={`decision:${decision.id}`} tone="drawer" />{/if}</span>
+              <span class="evrow">{displayName(ev.claim.role)} <ClaimChip lane={sel.lane} card={ev.cardId} claim={ev.claim} {now} mini inDrawer />{#if art}<ArtifactButton lane={sel.lane} artifact={art} from={`decision:${decision.id}`} tone="drawer" />{/if}</span>
             {:else if art}
               <span class="evrow"><ArtifactButton lane={sel.lane} artifact={art} from={`decision:${decision.id}`} tone="drawer" /></span>
             {:else}

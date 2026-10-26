@@ -14,7 +14,7 @@
 </script>
 
 <button type="button" class="file {tone}" class:selected class:superseded={artifact.superseded} data-src={src} aria-label={label} title={artifact.path}
-  onclick={() => openDrawer({ kind: 'artifact', lane, card: artifactCard(artifact), artifact: artifact.id, src })}>
+  onclick={() => openDrawer({ kind: 'artifact', lane, card: artifactCard(artifact), artifact: artifact.id, src }, { inDrawer: tone === 'drawer' })}>
   <Glyph name={STAGE_GLYPH[artifact.stage.replace('_', ' ')] ?? 'emblem'} scale={1} />
   <span>{artifact.name}</span>
 </button>

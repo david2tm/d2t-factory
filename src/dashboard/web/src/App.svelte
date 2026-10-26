@@ -4,7 +4,6 @@
   // interactions are Copy, opening and closing evidence, and the motion toggle; in replay
   // (/replay/<name>, 4-1) also the Replay bar, and the board follows its playback clock, not SSE.
   import { onMount } from 'svelte';
-  import { derived, readable, type Readable } from 'svelte/store';
   import ActionSlot from './components/ActionSlot.svelte';
   import ColumnHeaders from './components/ColumnHeaders.svelte';
   import Drawer from './components/Drawer.svelte';
@@ -12,14 +11,14 @@
   import LaneView from './components/Lane.svelte';
   import ReplayBar from './components/ReplayBar.svelte';
   import TopBar from './components/TopBar.svelte';
-  import { announce, message } from './lib/announce.ts';
+  import { message } from './lib/announce.ts';
+  import { boardClock, boardSources, followBoard, needsAnnouncer } from './lib/board.ts';
   import { closeDrawer, selection } from './lib/drawer.ts';
-  import { counts, laneKey, truthCounts, typeTag } from './lib/model.ts';
+  import { counts, laneKey, truthCounts } from './lib/model.ts';
   import { reduceMotion } from './lib/motion.ts';
   import * as playback from './lib/playback.ts';
-  import { needsSummary, recordedDay, replayRoute, replayShortcut, selectionPresent } from './lib/replay.ts';
+  import { recordedDay, replayRoute, replayShortcut } from './lib/replay.ts';
   import * as stream from './lib/stream.ts';
-  import type { Lane } from './lib/types.ts';
 
   // Live (/) or replay (/replay/<name>): which store feeds the board is fixed for the page.
   const route = replayRoute(typeof location === 'undefined' ? '/' : location.pathname);
@@ -28,10 +27,7 @@
   const rstatus = playback.status;
   const rec = playback.recording;
   const fast = playback.fast;
-  const lanes: Readable<Lane[]> = replay ? playback.lanes : stream.lanes;
-  const loaded: Readable<boolean> = replay ? derived(rstatus, (s) => s === 'ready') : stream.loaded;
-  const mode = replay ? readable<stream.Mode>('live') : stream.mode;
-  const now: Readable<number> = replay ? playback.t : stream.now;
+  const { lanes, loaded, mode, now } = boardSources(replay);
 
   onMount(() => {
     if (!replay) return stream.connect();
@@ -40,60 +36,31 @@
     return () => playback.close();
   });
 
-  // New Needs You cards: announced (`<TYPE>: <title>, run <id>`, coalesced within 1 s) and
-  // Master d2t looks up. What is already waiting at first load is not announced.
-  let seen: Set<string> | null = null;
+  // New Needs You cards: announced (coalesced within 1 s) and Master d2t looks up; muted at 16×
+  // replay with one summary when it stops (lib/board.ts).
+  const needs = needsAnnouncer();
   let lookUp = $state(false);
   let lookTimer: ReturnType<typeof setTimeout> | null = null;
-  // At 16× replay they are suppressed while playing; when it stops, one summary instead.
-  let wasFast = false;
+  $effect(() => { needs.fast($fast, $lanes); });
   $effect(() => {
-    const f = $fast;
-    if (wasFast && !f) announce(needsSummary($lanes));
-    wasFast = f;
-  });
-  $effect(() => {
-    if (!$loaded) return;
-    const fresh: string[] = [];
-    const keys = new Set<string>();
-    for (const lane of $lanes) for (const n of lane.needs_you) {
-      const k = `${laneKey(lane)}/${n.ask_id}`;
-      keys.add(k);
-      if (seen && !seen.has(k)) fresh.push(`${typeTag(n.card)}: ${n.card.title}, run ${lane.run_id}`);
-    }
-    seen = keys;
-    if (replay && $fast) return;
-    for (const m of fresh) announce(m);
-    if (fresh.length) {
+    if (needs.lanes($lanes, $loaded, replay && $fast)) {
       lookUp = true;
       if (lookTimer) clearTimeout(lookTimer);
       lookTimer = setTimeout(() => { lookUp = false; }, 1600);
     }
   });
   // Offline, the board is frozen at its last state: the clock that drives chips and `ago` holds
-  // the last live tick, and resumes when the stream is back.
-  // In replay the clock is the playhead: every deadline is compared with it, never wall time.
+  // the last live tick, and resumes when the stream is back. In replay it is the playhead.
   let held = $state(Date.now());
   $effect(() => { if ($mode === 'live') held = $now; });
-  const clock = $derived(replay || $mode === 'live' ? $now : held);
+  const clock = $derived(boardClock(replay, $mode, $now, held));
 
   const waiting = $derived($lanes.some((l) => l.needs_you.length > 0));
   // Under reduced motion the look-up pose is held while anything waits on d2t.
   const look = $derived(lookUp || ($reduceMotion && waiting));
 
-  // A drawer whose lane is gone closes. In replay the drawer follows the playhead: when its claim,
-  // decision or card is not on the board at the new playhead, it closes and focus moves to the
-  // timeline (its source control is gone too).
-  $effect(() => {
-    const s = $selection;
-    if (!s || !$loaded) return;
-    if (replay) {
-      if (!selectionPresent(s, $lanes)) {
-        selection.set(null);
-        document.querySelector<HTMLElement>('[data-replay-timeline]')?.focus();
-      }
-    } else if (!$lanes.some((l) => laneKey(l) === s.lane)) closeDrawer();
-  });
+  // A drawer whose lane is gone closes; in replay it follows the playhead (lib/board.ts).
+  $effect(() => { followBoard($selection, $lanes, $loaded, replay); });
 
   function onKey(e: KeyboardEvent): void {
     if (e.key === 'Escape' && $selection) {

@@ -9,7 +9,7 @@
   import type { Claim } from '../lib/types.ts';
   import Glyph from './Glyph.svelte';
 
-  let { lane, card, claim, now, mini = false }: { lane: string; card: string; claim: Claim; now: number; mini?: boolean } = $props();
+  let { lane, card, claim, now, mini = false, inDrawer = false }: { lane: string; card: string; claim: Claim; now: number; mini?: boolean; inDrawer?: boolean } = $props();
 
   const state = $derived(chipState(claim, now));
   const word = $derived(CHIP_WORD[state]);
@@ -19,7 +19,7 @@
   const label = $derived(`${displayName(claim.role)}: ${word}${gloss ? ` ${gloss}` : ''}. Open evidence`);
 
   function open(): void {
-    openDrawer({ kind: 'claim', lane, card, step: claim.step_id, src });
+    openDrawer({ kind: 'claim', lane, card, step: claim.step_id, src }, { inDrawer });
   }
 </script>
 
