@@ -29,7 +29,7 @@ import { claimPort, refusedExclusive, releaseClaims, scaffoldConflict } from './
 import { appendAll, gateOrThrow, makeEvent, stepView } from './commit.ts';
 import { contractOf, devserverDown } from './devserver.ts';
 import {
-  commitAll, currentBranch, diffNames, diffStat, dirty, head, headTreeEmpty, isAncestor, mergeInProgress, mergeInto, repoRoot, sha256, statusDigest, trackedClean,
+  commitAll, currentBranch, diffNames, diffStat, dirty, head, headTreeEmpty, isAncestor, mergeInProgress, mergeInto, mergeMessage, repoRoot, sha256, statusDigest, trackedClean,
 } from './git.ts';
 import { writeRecording } from './record.ts';
 import { requireHolder, requireRun, requireSession } from './resolve.ts';
@@ -431,7 +431,7 @@ function mergeApproved(c: Ctx, run: LoadedRun): Prepared {
   else if (!digest || digest !== baseline(state)) error = 'the main checkout differs from its baseline';
   else {
     command = `git merge --no-ff ${approved.sha} (${branch})`;
-    const m = mergeInto(c.root, approved.sha, `factory: merge ${branch} (${state.task ?? c.runId})`, { noFf: true });
+    const m = mergeInto(c.root, approved.sha, mergeMessage(branch, state.intake?.task || state.task), { noFf: true });
     if (!m.ok) error = m.error;
     else if (mergedCheck(c.root, approved.sha).exit_code !== 0) error = `${approved.sha.slice(0, 12)} is not in ${into} after the merge`;
     else sha = m.sha;

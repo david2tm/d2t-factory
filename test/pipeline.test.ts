@@ -1370,7 +1370,7 @@ test('acceptance: builder → test → FINDINGS → builder resume → test → 
   assert.equal(git(w.repo, 'merge-base', '--is-ancestor', runHead, branch), '');
   const s2 = stateOf(w, id);
   assert.equal(s2.phase, 'COMPLETED');
-  assert.ok(git(w.repo, 'log', '--format=%s', branch).includes(`factory: merge factory/${id}`));
+  assert.ok(git(w.repo, 'log', '--format=%s', branch).includes(`Merge branch 'factory/${id}'`));
   assert.equal(readFileSync(join(w.repo, 'footer.js'), 'utf8'), "module.exports = () => '<footer>';\n", "the main checkout's branch holds the builder's change");
   assert.equal(existsSync(wt), true, 'the worktree is kept');
   assert.equal(existsSync(join(w.home, 'ports', String(r.port))), false, 'the port is released');
@@ -2943,7 +2943,7 @@ test('acceptance (5-2): an empty dir runs FRAME (UI kit shadcn/ui), a scaffolded
   const log = subjects(g.repo);
   assert.equal(log.length, 4, log.join('\n'));
   assert.deepEqual(log.filter((x) => x === 'factory: init' || x === `factory: scaffold (${green.sc.step_id})`).length, 2, log.join('\n'));
-  assert.ok(log.some((x) => /^factory: S1 Todo list \(/.test(x)) && log.some((x) => x.startsWith(`factory: merge factory/${green.id}`)), log.join('\n'));
+  assert.ok(log.some((x) => /^factory: S1 Todo list \(/.test(x)) && log.some((x) => x === `Merge branch 'factory/${green.id}'`), log.join('\n'));
   assert.equal(git(g.repo, 'show', 'HEAD:todo.js'), "module.exports = ['buy milk'];\n");
   assert.equal(existsSync(green.wt), true, 'the worktree is kept');
 });

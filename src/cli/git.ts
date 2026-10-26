@@ -128,6 +128,10 @@ export const mergeInProgress = (cwd: string): boolean => git(cwd, ['rev-parse', 
 
 export type MergeResult = { ok: true; sha: string } | { ok: false; conflicts: string[]; error: string };
 
+// The human-approved merge's message (AD-8): git's own default subject, which commitlint's default
+// ignores accept, with the task as the body. The target's hooks still run on it.
+export const mergeMessage = (branch: string, task?: string | null): string => `Merge branch '${branch}'${task ? `\n\n${task}` : ''}`;
+
 // `git merge` of `rev` into the checkout's current branch, committed by the CLI. A failed merge is
 // aborted, so the checkout is left as it was; its conflicting files are returned. `noVerify` skips
 // the repo's merge hooks (the factory's own integration commit on the run branch).
