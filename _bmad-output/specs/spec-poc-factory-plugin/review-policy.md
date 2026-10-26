@@ -51,3 +51,5 @@
 | Resume selection (several live runs) | Declared ask |
 
 Planned gates and declared asks are not escalations. Anything not in this table never reaches the human; lost liveness is a dashboard-only notice. Chat and dashboard show each ask with the same title, reason, commands, what each command does next, and what a chat reply does.
+
+A request to change sandbox or permission settings is never an ask: the factory doesn't make one, and it never runs a command outside the sandbox (AD-35).

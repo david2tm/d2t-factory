@@ -45,3 +45,13 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dry-run-2-worktree-exit-and-removal.md`
   summary: Kept run worktrees pile up under `<repo>/.claude/worktrees/` with their installs and copied gitignored files (`.env`). Tools run from the main checkout may see them as duplicate projects.
   evidence: The human chose to keep worktrees silently (the sandbox blocks removal). `.git/info/exclude` hides them from git only. Jest's haste map, ESLint or `tsc` run in the target's main checkout may crawl `.claude/worktrees/*` and find duplicate modules or tests (unverified; settle on a brownfield repo with Jest after two runs). A cleanup recipe for the human's own terminal, or a `factory prune` printing one, would cover both.
+
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/7-1-factory-sessions-never-leave-the-sandbox.md`
+  summary: The sandbox tripwire covers only Bash; deny dangerouslyDisableSandbox on any tool that accepts it (and widen the PreToolUse matcher).
+  evidence: maybe-false, would be medium. AD-35 forbids any out-of-sandbox command, but the matcher is Write|Edit|MultiEdit|NotebookEdit|Bash. Settled by checking whether Claude Code's other command-running tools (Monitor, PowerShell) take the flag and reach PreToolUse with it.
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/7-1-factory-sessions-never-leave-the-sandbox.md`
+  summary: The guard only runs in bound sessions, so the conductor's pre-bind factory decide/start calls and post-run turns have only the SKILL.md rule against an unsandboxed retry.
+  evidence: Real by design (hooks never alter non-factory sessions; the binding comes from factory start). If start fails on a sandbox denial, nothing enforces the rule. Decide in AD-31 whether to accept this or to guard a session that has a pending /factory prompt.
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/7-1-factory-sessions-never-leave-the-sandbox.md`
+  summary: Tighten the approved SPEC wording. CAP-10 success says "no factory command runs outside the sandbox" (the rule covers every command in a factory session), and the Constraints bullet says setup sets up everything, though allowLocalBinding is manual.
+  evidence: The SPEC.md text is the approved proposal's verbatim. The README now says "Setup and the settings above". The SPEC change needs the contract owner.

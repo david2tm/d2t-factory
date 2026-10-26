@@ -2,6 +2,7 @@
 // write, or a Bash command naming a path, under factoryHome() or the Claude projects dir, except
 // inside a claimed step's artifacts dir, the open INTAKE conversation's out.md dir (the conductor
 // rewrites it after `done` when the human changes something), or a plain conductor `factory …` call.
+// It also denies any Bash call that asks to run outside the sandbox (AD-35).
 import { homedir } from 'node:os';
 import { basename, dirname } from 'node:path';
 import { openSteps, type RunState } from '../core/reducer.ts';
@@ -157,6 +158,8 @@ export interface GuardContext { cwd: string; protectedRoots: string[]; allowedDi
 
 export type GuardVerdict = { deny: false } | { deny: true; reason: string };
 
+export const SANDBOX_DENY = "factory guard: factory sessions run every command inside the sandbox (AD-35). Report the failure as it is; don't retry outside the sandbox and don't ask the human to change sandbox or permission settings.";
+
 function checkPaths(paths: readonly string[], ctx: GuardContext, what: string): GuardVerdict {
   for (const p of paths) {
     const real = realish(p, ctx.cwd);
@@ -173,6 +176,8 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: GuardC
     return fp ? checkPaths([fp], ctx, tool) : { deny: false };
   }
   if (tool === 'Bash') {
+    // Conductor and agents alike; with no sandbox the flag is a no-op, so the deny costs nothing.
+    if (input.dangerouslyDisableSandbox === true) return { deny: true, reason: SANDBOX_DENY };
     const cmd = typeof input.command === 'string' ? input.command : '';
     const sh = tokenize(cmd);
     if (ctx.fromAgent && callsFactory(sh)) return { deny: true, reason: 'factory guard: agents never call factory; only the conductor does (AD-2).' };
@@ -187,6 +192,8 @@ export function guard(p: Payload): unknown {
   if (!b) return;
   const tool = str(p.tool_name) ?? '';
   const input = p.tool_input && typeof p.tool_input === 'object' ? (p.tool_input as Record<string, unknown>) : {};
+  // Before the run state loads, so an unreadable log can't fail this one open.
+  if (tool === 'Bash' && input.dangerouslyDisableSandbox === true) return deny(SANDBOX_DENY);
   const state = loadCommands(b.hash, b.runId);
   const ctx: GuardContext = {
     cwd: str(p.cwd) ?? process.cwd(),
@@ -195,6 +202,7 @@ export function guard(p: Payload): unknown {
     fromAgent: p.agent_id !== undefined && p.agent_id !== null && p.agent_id !== '',
   };
   const v = decide(tool, input, ctx);
-  if (!v.deny) return;
-  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } };
+  return v.deny ? deny(v.reason) : undefined;
 }
+
+const deny = (reason: string): unknown => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });

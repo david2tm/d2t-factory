@@ -146,6 +146,7 @@ test('hooks.json registers exec-form hooks, sync and async per AD-13, with the t
   const skill = readFileSync(join(ROOT, 'skills', 'factory', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: factory\n[\s\S]*disable-model-invocation: true\n---\n/);
   assert.match(skill, /factory decide --session \$\{CLAUDE_SESSION_ID\}/);
+  assert.match(skill, /Never run a command outside the sandbox \(`dangerouslyDisableSandbox`\)/, '7-1');
 });
 
 test('no factory home: every hook exits 0 silently and creates nothing', () => {
@@ -555,6 +556,11 @@ test('guard: in a bound session, factory-owned writes are denied except the clai
   assert.equal(ok(cli(w, ['done', step, '--session', s1])).state, 'reported');
   silent(pre(s1, 'Write', { file_path: stepOut, content: 'x' }));
   denied(pre(s1, 'Write', { file_path: join(runDir(w, id), 'artifacts', 'steps', 'other', 'out.md'), content: 'x' }));
+  // 7-1: no command runs outside the sandbox, from the conductor or an agent; unbound sessions keep the flag.
+  assert.match(denied(pre(s1, 'Bash', { command: 'git status', dangerouslyDisableSandbox: true })), /inside the sandbox \(AD-35\)/);
+  assert.match(denied(pre(s1, 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: true }, 'agent1')), /inside the sandbox \(AD-35\)/);
+  silent(pre(s1, 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: false }, 'agent1'));
+  silent(pre('unbound', 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: true }));
   // Unbound sessions are never touched.
   silent(pre('unbound', 'Write', { file_path: inboxFile }));
 });

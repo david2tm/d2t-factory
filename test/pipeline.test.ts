@@ -133,6 +133,7 @@ test('acceptance: the whole front half through bin/factory ends in BUILD with S1
   t.after(() => { run(w, ['devserver', 'down', '--session', s]); });
   const brief = readFileSync(recon.brief_path, 'utf8');
   assert.ok(brief.includes(w.repo) && brief.includes(recon.output_path) && brief.includes('add a footer'), brief);
+  assert.match(brief, /never set `dangerouslyDisableSandbox`/, 'every brief carries the sandbox rule (7-1)');
   assert.equal(ok(c.agent(recon, reconOut(), 'ag-recon')).state, 'verified');
 
   // ORIENT ends, SCAFFOLD starts: cache, baseline, stage_completed, port, worktree, enter_worktree.

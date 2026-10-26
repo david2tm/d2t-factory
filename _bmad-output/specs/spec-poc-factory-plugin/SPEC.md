@@ -53,7 +53,7 @@ Vision plus opportunity. d2t faces 1.5–2h interview exercises — add a featur
   - **success:** Across a dry run, zero findings lack a failure scenario or fall outside Bug / Spec miss / Security / Breakage; ux/a11y/ui findings cite an observed page state.
 - **CAP-10**
   - **intent:** Human is interrupted only by the asks listed in `review-policy.md` — planned gates, the four escalation conditions, SCAFFOLD failure, the designer's one question, and resume selection; everything else resolves among agents.
-  - **success:** In a dry run, every human prompt maps to exactly one ask type in `review-policy.md`; lost liveness shows on the dashboard only, never as a chat prompt.
+  - **success:** In a dry run, every human prompt maps to exactly one ask type in `review-policy.md`; lost liveness shows on the dashboard only, never as a chat prompt; no chat message asks the human to change sandbox or permission settings, and no factory command runs outside the sandbox.
 - **CAP-11**
   - **intent:** When INTAKE set a time limit, a budget clock, running from run start and never pausing, makes the conductor propose cutting remaining slices at the limit − 40 min, as a live human gate. Without a limit there is no budget clock and no cut gate; the board shows elapsed time.
   - **success:** A run with a 2:00 limit reaching 1:20 (or a 1:30 limit reaching 0:50) with unbuilt slices raises the cut proposal; the human's choice is recorded; a run with no time limit never raises a cut and its lane shows elapsed time.
@@ -79,6 +79,7 @@ Vision plus opportunity. d2t faces 1.5–2h interview exercises — add a featur
 - Ships as a standalone Claude Code plugin installed user-level; target projects have no BMad.
 - Nothing lands in the target project's working tree: factory tooling ships with the plugin (MCP/npx), the repo's own e2e tooling is preferred when present, factory state, run artifacts, and worktrees live under `~/.factory/<repo-hash>/`; the worktree holds product code only.
 - Factory hooks never alter non-factory sessions.
+- Factory sessions run every command inside the user's sandbox and never ask the human to loosen it; what the factory needs from the machine is set up once by `factory setup`.
 - New dependencies in a brownfield repo require the human (escalation condition 2).
 - Every merge requires explicit human OK.
 - Dashboard truth never comes from LLM self-report; no Docker; minimal local process.

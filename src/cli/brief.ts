@@ -316,6 +316,7 @@ export function briefText(state: RunState, commands: readonly AnyEvent[], step: 
     '', '## Facts', ...facts.map((f) => `- ${f}`),
     '', '## Read only these inputs', ...inputs(state, step, root, repair).map(([label, p]) => `- ${label}: ${p}`),
     '', '## Write exactly one file', `${step.output_path}`, `Write it with the Write tool. Write nothing else under ~/.factory${isAppReviewer(step.role) ? ' except your screenshots, at the paths the output format below gives' : ''}, and never run \`factory\`.`,
+    'Run every command inside the sandbox: never set `dangerouslyDisableSandbox`. If the sandbox blocks something you need, report it as your failure or escalation; don\'t work around it, and don\'t ask for a sandbox or permission change.',
     '', '## Output format', isAppReviewer(step.role) ? reviewerFormat(step.role, step.id) : FORMAT[step.role === 'scaffolder' && state.greenfield ? 'scaffolder:greenfield' : step.role] ?? 'Line 1 `STATUS: DONE|ESCALATE`.',
   ];
   if (prev) parts.push('', `## Your last round on ${sl!.id} did not pass`, quote(redactString(prev.note, values)));

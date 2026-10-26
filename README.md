@@ -57,6 +57,8 @@ Setup adds everything below except `sandbox.network.allowLocalBinding`. Without 
 
 The `sandbox` block is only needed when you run with the sandbox on. The dry run used `"defaultMode": "bypassPermissions"`. In a stricter mode, expect permission prompts from the builder and reviewer agents.
 
+The factory never runs a command outside the sandbox and never asks you to change it mid-run. If a run fails on a sandbox denial, that's a factory bug: report it. Setup and the settings above cover what the factory needs.
+
 ### 5. A launcher
 
 The factory loads per session with `--plugin-dir`. Nothing is installed into Claude, nothing lands in the target repo, and edits to the plugin take effect in the next session.

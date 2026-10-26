@@ -522,6 +522,7 @@ flowchart BT
   - **The guard.** A synchronous `PreToolUse` guard runs only in factory-bound sessions. It denies a `Write`, `Edit` or `Bash` that writes under `~/.factory/` or `~/.claude/projects/`, with two exceptions:
     - writes into the `artifacts/steps/<step_id>/` of any step currently claimed in the bound run;
     - `factory …` invocations from the conductor (no `agent_id` in the hook input). The guard denies `factory` calls from subagents.
+  - It also denies, in a bound session, a `Bash` call with `dangerouslyDisableSandbox: true`, from the conductor or an agent (AD-35). The flag is in the hook input; with no sandbox it is a no-op, so the denial costs nothing.
   - **Closing the known gaps (spike 0-1 review E4–E6).** These are cheap to close, so the tripwire closes them:
     - **Case.** On a case-insensitive volume (macOS default APFS), both sides are case-folded before the prefix match, so `~/.Factory/` matches.
     - **Symlinks.** A path is resolved by `realpath` of its deepest existing ancestor, and a symlink leaf is followed with `readlink` even when its target doesn't exist. Lexical resolution is never used, so a dangling link into `~/.factory/` is caught.
@@ -568,8 +569,9 @@ flowchart BT
   - **`factory setup`** is idempotent. It:
     - creates `~/.factory` outside the sandbox. A sandbox cannot create a missing directory, even one it allow-lists (spike 03);
     - records the absolute Node path;
-    - merges `~/.factory` into `permissions.additionalDirectories`, the allow rules, the sandbox `allowWrite`, and an `EnterWorktree` allow rule in `~/.claude/settings.json`. No rule is added for the final git merge: the CLI runs it after the conductor left the worktree, from the main checkout, which is then the session's cwd (AD-8, dry run 2). The factory never bypasses the sandbox;
+    - merges `~/.factory` into `permissions.additionalDirectories`, the allow rules, the sandbox `allowWrite`, and an `EnterWorktree` allow rule in `~/.claude/settings.json`. No rule is added for the final git merge: the CLI runs it after the conductor left the worktree, from the main checkout, which is then the session's cwd (AD-8, dry run 2);
     - runs `agent-browser install`.
+  - **The sandbox is never bypassed.** In a factory-bound session neither the conductor nor an agent runs a command with `dangerouslyDisableSandbox`, and neither suggests a sandbox, permission or settings change to the human. A sandbox denial is an ordinary failure on the path that hit it (a failed check, an agent failure or escalation, a CLI error). A step that needs more than the sandbox allows is a factory defect, fixed in setup, in the order of steps, or in the README (dry run 2).
   - **Refusals.** `factory start` refuses with `SETUP_REQUIRED` until setup has run, and also while `plugin-env.json` is missing, with the message "restart the session".
 ## Consistency Conventions
 

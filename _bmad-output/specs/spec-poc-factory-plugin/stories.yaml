@@ -162,3 +162,24 @@
   invoke_dev_with: >-
     Governing decisions: AD-8, AD-21, AD-24 (resume), AD-27. Source:
     sprint-change-proposal-2026-10-25.md section 4.4.
+
+- id: "7-1"
+  title: Factory sessions never leave the sandbox
+  description: >-
+    The guard denies Bash with dangerouslyDisableSandbox in bound sessions (conductor and agents);
+    the conductor skill and every brief forbid bypassing the sandbox or asking the human to change
+    sandbox or permission settings; README note (dry run 2 finding 5; CAP-10, AD-35).
+  invoke_dev_with: >-
+    Governing decisions: AD-31 (guard), AD-35. Source:
+    planning-artifacts/sprint-change-proposal-2026-10-26.md section 4.1.
+
+- id: "7-2"
+  title: Every agent role has a character; the CLI's checks are droids
+  description: >-
+    Characters for recon, framer, scaffolder, spec-writer and slicer standing at their stage cards;
+    one shared check-droid chassis named per run_check id, shown while the check runs and in claim
+    and drawer rows (dry run 2 findings 1, 2; CAP-15).
+  invoke_dev_with: >-
+    Governing decisions: AD-23 (checks_running is projection-only), AD-32 (no event change). Visual
+    rules: DESIGN.md Character roster, Check droids. Source: sprint-change-proposal-2026-10-26.md
+    sections 4.2, 4.3.

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { intakeCard, intakeConfirmCard } from '../src/core/cards.ts';
 import { initialState, type RunState, type Step } from '../src/core/reducer.ts';
-import { callsFactory, decide, isPlainFactory, pathCandidates, tokenize, writableDirs, type GuardContext } from '../src/hooks/guard.ts';
+import { callsFactory, decide, isPlainFactory, pathCandidates, SANDBOX_DENY, tokenize, writableDirs, type GuardContext } from '../src/hooks/guard.ts';
 import { isUnder, realish } from '../src/store/paths.ts';
 
 const H = '/home/u';
@@ -115,6 +115,18 @@ test('Bash: the conductor\'s plain factory call passes; a subagent\'s factory ca
   assert.equal(b('cd /tmp && factory next', true), true);
   assert.equal(b(`factory done S1 --note "$(cat ${t.home}/inbox/s.jsonl)"`), true, 'substitution loses the exemption');
   assert.equal(b('factory next > /tmp/x'), false, 'no exemption, but no protected path either');
+});
+
+test('Bash outside the sandbox is denied for the conductor and agents; false or absent runs the usual checks (7-1)', () => {
+  const t = tree();
+  const b = (input: Record<string, unknown>, agent = false) => decide('Bash', input, t.ctx(agent));
+  assert.deepEqual(b({ command: 'git merge --no-ff x', dangerouslyDisableSandbox: true }), { deny: true, reason: SANDBOX_DENY });
+  assert.deepEqual(b({ command: 'npm ci', dangerouslyDisableSandbox: true }, true), { deny: true, reason: SANDBOX_DENY });
+  assert.equal(b({ command: 'factory next --session s', dangerouslyDisableSandbox: true }).deny, true, 'not even the plain factory exemption');
+  assert.equal(b({ command: 'npm ci', dangerouslyDisableSandbox: false }, true).deny, false);
+  assert.equal(b({ command: 'factory next --session s', dangerouslyDisableSandbox: false }).deny, false);
+  assert.match((b({ command: `echo x > ${t.home}/inbox/s`, dangerouslyDisableSandbox: false }) as { reason: string }).reason, /factory-owned/);
+  assert.equal(b({ command: 'npm ci', dangerouslyDisableSandbox: 'true' }).deny, false, 'only a real true');
 });
 
 test('Bash: any word resolving under a protected root is denied, except claimed step dirs', () => {

@@ -17,6 +17,8 @@ Recorded as observations only. Decisions come later.
 | 4b | bug | The failed `git.merged` check records only the exit code. Git's error text goes into the thrown `CHECK_FAILED` message (`src/cli/decide.ts:269`) but not the event log, so the board and the recording can't say why. | `check_ran` data has no output field |
 | 5 | design | After the failure, the conductor decided on its own to retry outside the sandbox and asked the human to type `/factory merge` again so it could "run the merge outside the sandbox from the start". It also suggested `/sandbox` to allow writes to the repo's `src/`. The factory has no rule on whether the conductor may bypass the sandbox, and the fix it suggests is the human's to make, not part of the closed list. | same transcript |
 
+**Decided:** findings 1, 2 and 5 in `planning-artifacts/sprint-change-proposal-2026-10-26.md` (approved 2026-10-26): 5 is story 7-1, and 1 and 2 are story 7-2. Findings 3, 4 and 4b are fixed (`50ce7f5`, `ed681e0`).
+
 Cleanup note: stopping the dev server and the dashboard needed a kill outside the sandbox (`kill … operation not permitted`), the same limit as dry run 1 finding 11.
 
 ## Not reached yet
