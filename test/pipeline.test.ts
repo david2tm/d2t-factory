@@ -9,6 +9,7 @@ import { test, type TestContext } from 'node:test';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
+import { briefText } from '../src/cli/brief.ts';
 import { contractDiff, logTail } from '../src/cli/next.ts';
 import { attemptsInChain } from '../src/cli/steps.ts';
 import { WAIT_MAX_MS } from '../src/core/config.ts';
@@ -958,6 +959,34 @@ function passingRound(r: Run, b: any, files: Record<string, string | null>, agen
   assert.equal(ok(r.c.agent(rv, approveOut(), `${agentId}-rv`)).state, 'verified');
   return { rv };
 }
+
+test('briefs (6-2 deferred): spec-writer, slicer, builder and designer briefs carry the task agreed at intake and its scope; recon keeps the start task', (t) => {
+  const w = world();
+  const intake = { task: 'add a grey footer with a sitemap link', scope: { in: ['the footer', 'its sitemap link'], out: ['the header', 'dark mode'] } };
+  const r = toGate2(w, 'sa', t, NO_SERVER, intake);
+  const want = ['- task (agreed at intake): add a grey footer with a sitemap link', '- in scope: the footer; its sitemap link', '- out of scope (do none of it): the header; dark mode'];
+  const has = (path: string): void => { const b = readFileSync(path, 'utf8'); for (const x of want) assert.ok(b.includes(x), `${x} in\n${b}`); };
+  has(r.spec.brief_path);
+  has(r.slicer.brief_path);
+  ok(decide(w, 'sa', 'approve gate2', { cwd: r.c.cwd }));
+  has(r.c.take(byKind('spawn', 'builder')).brief_path);
+  // The designer (this run is UI-free, so none ran): briefText over the same run's state.
+  const state = stateOf(w, r.id);
+  const design = briefText(state, commands(w, r.id), { id: 'd1', role: 'designer', stage: 'SPEC_DESIGN', attempt: 1, output_path: '/x/out.md' }, w.repo);
+  for (const x of want) assert.ok(design.includes(x), `${x} in\n${design}`);
+  // Recon and reviewers keep the raw start task.
+  const recon = briefText(state, [], { id: 'r1', role: 'recon', stage: 'RECON', attempt: 1, output_path: '/x/out.md' }, w.repo);
+  assert.ok(recon.includes('- task: add a footer\n') && !recon.includes('in scope:'), recon);
+  // No intake recorded: the start task and no scope lines; an intake without a task or scope keeps the start task and reads a dash.
+  const sw = { id: 's1', role: 'spec-writer', stage: 'SPEC', attempt: 1, output_path: '/x/out.md' } as const;
+  const bare = briefText({ ...state, intake: undefined }, [], sw, w.repo);
+  assert.ok(bare.includes('- task: add a footer\n') && !bare.includes('in scope:'), bare);
+  const empty = briefText({ ...state, intake: { ...state.intake!, task: undefined, scope: undefined } }, [], sw, w.repo);
+  assert.ok(empty.includes('- task: add a footer\n- in scope: —\n- out of scope (do none of it): —\n'), empty);
+  // Human text: redacted with the run's values.
+  const secret = briefText(state, [], sw, w.repo, {}, ['sitemap']);
+  assert.ok(!secret.includes('sitemap') && secret.includes('- in scope: the footer; its [REDACTED] link'), secret);
+});
 
 test('build: a builder brief, a commit per parsed done (an empty diff too), none on a parse error; a builder ESCALATE parks the slice and retry reissues it', (t) => {
   const w = world();

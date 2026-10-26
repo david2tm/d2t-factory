@@ -247,9 +247,24 @@ function inputs(state: RunState, step: BriefStep, root: string, repair?: BriefRe
   return out;
 }
 
+// The roles that build what INTAKE agreed get the agreed task and its scope (human text, so
+// redacted like the notes); the others, and any run without a recorded intake, keep the task
+// `factory start` was given.
+const SCOPED_ROLES = ['spec-writer', 'designer', 'slicer', 'builder'];
+const scopeList = (xs: readonly string[] | undefined): string => (xs?.length ? xs.join('; ') : '—');
+function taskFacts(state: RunState, role: string, values: readonly string[]): string[] {
+  const i = state.intake;
+  if (!SCOPED_ROLES.includes(role) || !i) return [`task: ${state.task}`];
+  return [
+    i.task ? `task (agreed at intake): ${i.task}` : `task: ${state.task}`,
+    `in scope: ${scopeList(i.scope?.in)}`,
+    `out of scope (do none of it): ${scopeList(i.scope?.out)}`,
+  ].map((f) => redactString(f, values));
+}
+
 // Only the human's notes and the error text are redacted: paths, ports and the format must stay exact.
 export function briefText(state: RunState, commands: readonly AnyEvent[], step: BriefStep, root: string, extra: BriefExtra = {}, values: readonly string[] = []): string {
-  const facts: string[] = [`task: ${state.task}`, `run: ${state.run_id} (branch ${state.branch}, base ${state.base_sha})`];
+  const facts: string[] = [...taskFacts(state, step.role, values), `run: ${state.run_id} (branch ${state.branch}, base ${state.base_sha})`];
   if (state.port !== undefined && !orienting(step.role)) facts.push(`claimed port: ${state.port}`);
   if (state.worktree && !orienting(step.role)) facts.push(`worktree: ${state.worktree}`);
   if (step.role === 'scaffolder' && state.repo_hash && state.run_id) {
