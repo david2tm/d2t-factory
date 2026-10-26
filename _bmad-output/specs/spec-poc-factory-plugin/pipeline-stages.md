@@ -13,7 +13,7 @@ One pipeline; forks only at orientation. Flow diagram: `architecture-diagrams.md
 | BUILD LOOP | worktree | Per slice: builder ⇄ reviewers; pipelined for independent slices, serial for dependent | Code + verdict files | Escalations only |
 | WRAP | worktree → main checkout | Summary, conflict resolution, re-verify; after merge OK the conductor leaves the worktree, then the factory merges; transcript snapshot+redact | PR or local merge | **Human merge OK** |
 
-WRAP order: `/factory merge` records the approval only. The conductor then leaves the worktree, and the factory merges from the main checkout (the sandbox lets a command write only under the session's current directory), records the result, removes the worktree and completes the run. A failed merge is aborted and recorded with git's error; the merge card comes back with that error, and `/factory merge` retries.
+WRAP order: `/factory merge` records the approval only. The conductor then leaves the worktree, and the factory merges from the main checkout (the sandbox lets a command write only under the session's current directory), records the result and completes the run (the worktree is kept). A failed merge is aborted and recorded with git's error; the merge card comes back with that error, and `/factory merge` retries.
 
 Greenfield: `/factory` in a non-git directory runs `git init` plus an empty initial commit before the run is claimed; project files are created only in the worktree.
 

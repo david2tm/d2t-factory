@@ -2,7 +2,7 @@
 // probes, the worktree (AD-15), the per-step commits (AD-30) and the merge.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { FactoryError } from '../core/errors.ts';
 
@@ -138,14 +138,4 @@ export function mergeInto(cwd: string, rev: string, message: string, o: { noFf?:
   const conflicts = (git(cwd, ['diff', '--name-only', '--diff-filter=U']) ?? '').split('\n').filter(Boolean);
   if (mergeInProgress(cwd)) spawnSync('git', ['merge', '--abort'], { cwd, stdio: 'ignore' });
   return { ok: false, conflicts, error: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() || `git merge exited ${r.status}` };
-}
-
-// `git worktree remove <path>` (never --force: uncommitted work stays). Already gone counts as removed.
-export function worktreeRemove(root: string, path: string): { ok: true } | { ok: false; error: string } {
-  if (!existsSync(path)) {
-    spawnSync('git', ['worktree', 'prune'], { cwd: root, stdio: 'ignore' });
-    return { ok: true };
-  }
-  const r = spawnSync('git', ['worktree', 'remove', path], { cwd: root, encoding: 'utf8' });
-  return r.status === 0 ? { ok: true } : { ok: false, error: (r.stderr || `git worktree remove exited ${r.status}`).trim() };
 }

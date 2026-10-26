@@ -26,6 +26,9 @@ export function mayStop(state: RunState, background_tasks: unknown): StopVerdict
     if (st.kind === 'ask_human') continue;
     // The subject of an open escalation is parked until the human rules (its card is an ask_human step).
     if (Object.values(state.asks).some((a) => a.open && a.step_id === st.id)) continue;
+    // A reissued exit_worktree: a done came from inside the worktree, so ExitWorktree did not move this
+    // session. Only the human can go on (a session started in the main checkout), so the turn may end.
+    if (st.kind === 'exit_worktree' && st.attempt > 1) continue;
     if (st.state === 'claimed') {
       const i = free.findIndex((t) => carrier(st, t));
       if (i >= 0) { free.splice(i, 1); continue; }

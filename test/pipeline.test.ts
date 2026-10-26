@@ -3,7 +3,7 @@
 // housekeeping and recording. The tests play the conductor and its agents; agent facts come from
 // the real 1-3 hooks. The dev server binds a local port (tests that need it are skipped without).
 import { strict as assert } from 'node:assert';
-import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { createHash } from 'node:crypto';
@@ -1145,7 +1145,7 @@ test('a manifest change raises New dependency at close; accept closes; a failing
   ok(decide(w, 'sa', 'abandon', { cwd: wt }));
 });
 
-test('WRAP integrates a moved target cleanly; merge is refused on a changed main checkout, a detached HEAD or a moved target; an approved merge waits for exit_worktree, is refused once main moved or left the approved branch (the card comes back each time), then merges the latest approval --no-ff; a failed worktree removal is reported and the run still completes', (t) => {
+test('WRAP integrates a moved target cleanly; merge is refused on a changed main checkout, a detached HEAD or a moved target; an approved merge waits for exit_worktree, is refused once main moved or left the approved branch (the card comes back each time), then merges the latest approval --no-ff; the worktree is kept and the run completes', (t) => {
   const w = world();
   const r = toBuild(w, 'sa', t);
   const { id, c, wt } = r;
@@ -1186,13 +1186,13 @@ test('WRAP integrates a moved target cleanly; merge is refused on a changed main
   assert.deepEqual([ma.data.sha, ma.data.target, ma.data.pins.length], [runHead, branch, 2]);
   // Dry run 2: the conductor is still inside the worktree, so no git merge has run; it leaves first.
   // exit_worktree: from inside it is refused and reissued; from outside next verifies it.
-  writeFileSync(join(wt, 'leftover.txt'), 'untracked\n'); // git worktree remove (no --force) refuses
   commitIn(w.repo, 'main3.txt', 'pending\n', 'main moves while the merge is pending');
   const ex = c.take(byKind('exit_worktree'));
   assert.equal(ex.path, wt);
   assert.deepEqual(c.next().steps, [], 'nothing else is due while the approval is pending: no new merge card');
   assert.equal(isAncestorIn(wt, headOf(w.repo), 'HEAD'), false, 'the moved target is not integrated while pending');
-  fails(c.done(ex.step_id), 'MISSING_EVIDENCE', /still inside the worktree/);
+  const stuck = fails(c.done(ex.step_id), 'MISSING_EVIDENCE', /still inside the worktree/).error.message;
+  assert.ok(stuck.endsWith(`start claude in ${realpathSync(w.repo)} and type /factory resume ${id} there; then end the turn`), stuck);
   assert.equal(commands(w, id).some((e) => e.kind === 'check_ran' && e.data.check === 'git.merged'), false, 'no git merge from inside the worktree');
   assert.equal(isAncestorIn(w.repo, runHead, 'HEAD'), false, 'not merged');
   // main moved while the merge was pending: refused before any git merge (that target was never
@@ -1235,8 +1235,8 @@ test('WRAP integrates a moved target cleanly; merge is refused on a changed main
   assert.deepEqual(last(w, id, 'merged').data, { sha: headOf(w.repo), target: branch });
   assert.equal(fin.done, true);
   assert.deepEqual([fin.merged, fin.target], [headOf(w.repo), branch]);
-  assert.equal(fin.worktree_removed, false);
-  assert.match(fin.worktree_error, /untracked|modified/);
+  assert.equal('worktree_removed' in fin || 'worktree_error' in fin, false, 'no removal report');
+  assert.equal(existsSync(wt), true, 'the worktree is kept');
   const s = stateOf(w, id);
   assert.equal(s.phase, 'COMPLETED');
   assert.equal(existsSync(join(w.home, 'ports', String(r.port))), false, 'the port is released');
@@ -1286,14 +1286,14 @@ test('WRAP: a conflicting target blocks the card with the files; the human resol
   // Already outside the worktree when next runs (dry run 2): no exit_worktree, next merges at once.
   c.cwd = w.repo;
   const fin = c.next();
-  assert.deepEqual([fin.done, fin.worktree_removed], [true, true]);
+  assert.equal(fin.done, true);
   assert.equal(readFileSync(join(w.repo, 'footer.js'), 'utf8'), 'run footer\nmain footer\n');
   assert.equal(commands(w, id).some((e) => e.kind === 'step_issued' && e.data.kind === 'exit_worktree'), false, 'no exit_worktree');
-  assert.equal(existsSync(wt), false);
+  assert.equal(existsSync(wt), true, 'the worktree is kept');
   assert.deepEqual(stateOf(w, id).rejected, []);
 });
 
-test('acceptance: builder → test → FINDINGS → builder resume → test → APPROVE → close → WRAP checks → /factory merge → exit_worktree, through bin/factory, ends COMPLETED with the change merged, the worktree gone, the port released and a redacted recording', SERVER, async (t) => {
+test('acceptance: builder → test → FINDINGS → builder resume → test → APPROVE → close → WRAP checks → /factory merge → exit_worktree, through bin/factory, ends COMPLETED with the change merged, the worktree kept, the port released and a redacted recording', SERVER, async (t) => {
   const w = world();
   const s = 'sa';
   const r = toBuild(w, s, t, {}); // the real contract: npm start, npm test, npm run health
@@ -1336,14 +1336,13 @@ test('acceptance: builder → test → FINDINGS → builder resume → test → 
   assert.equal(ok(c.done(ex.step_id)).state, 'verified');
   appendFileSync(join(w.projects, '-repo', `${s}.jsonl`), JSON.stringify({ type: 'assistant', sessionId: s, message: { content: `the token ${SECRET}` } }) + '\n');
   const fin = c.next();
-  assert.deepEqual([fin.done, fin.worktree_removed, fin.devserver_stopped], [true, true, true]);
+  assert.deepEqual([fin.done, fin.devserver_stopped], [true, true]);
   assert.equal(git(w.repo, 'merge-base', '--is-ancestor', runHead, branch), '');
   const s2 = stateOf(w, id);
   assert.equal(s2.phase, 'COMPLETED');
   assert.ok(git(w.repo, 'log', '--format=%s', branch).includes(`factory: merge factory/${id}`));
   assert.equal(readFileSync(join(w.repo, 'footer.js'), 'utf8'), "module.exports = () => '<footer>';\n", "the main checkout's branch holds the builder's change");
-  assert.equal(existsSync(wt), false, 'the worktree is gone');
-  assert.ok(!git(w.repo, 'worktree', 'list').includes(wt));
+  assert.equal(existsSync(wt), true, 'the worktree is kept');
   assert.equal(existsSync(join(w.home, 'ports', String(r.port))), false, 'the port is released');
   // The recording: manifest, the run tree without redact.json/lock/devserver files, transcripts; no SECRET.
   const rec = join(w.home, 'recordings', id);
@@ -2629,7 +2628,7 @@ test('parallel (5-1): two runs in one repo, interleaved to run_completed, on the
     assert.deepEqual([s.phase, s.branch, last(w, r.id, 'run_completed').kind], ['COMPLETED', `factory/${r.id}`, 'run_completed']);
     assert.equal(git(w.repo, 'merge-base', '--is-ancestor', `factory/${r.id}`, 'HEAD'), '', `factory/${r.id} is merged`);
     assert.equal(existsSync(join(w.home, 'ports', String(ports[i]))), false);
-    assert.equal(existsSync(r.wt), false, 'the worktree is gone');
+    assert.equal(existsSync(r.wt), true, 'the worktree is kept');
     assert.deepEqual(s.rejected, []);
     for (const e of commands(w, r.id)) assert.ok(validateEvent(e).ok, JSON.stringify(e));
   }
@@ -2916,7 +2915,7 @@ test('acceptance (5-2): an empty dir runs FRAME (UI kit shadcn/ui), a scaffolded
   assert.deepEqual(log.filter((x) => x === 'factory: init' || x === `factory: scaffold (${green.sc.step_id})`).length, 2, log.join('\n'));
   assert.ok(log.some((x) => /^factory: S1 Todo list \(/.test(x)) && log.some((x) => x.startsWith(`factory: merge factory/${green.id}`)), log.join('\n'));
   assert.equal(git(g.repo, 'show', 'HEAD:todo.js'), "module.exports = ['buy milk'];\n");
-  assert.equal(existsSync(green.wt), false, 'the worktree is gone');
+  assert.equal(existsSync(green.wt), true, 'the worktree is kept');
 });
 
 test('greenfield init (5-2): in a non-git dir decide answers a task and a bare /factory with none and a decision with NOT_FOUND, writing nothing; start makes .git and one empty commit `factory: init`; a framer naming brownfield is rejected and reissued', () => {

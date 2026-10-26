@@ -29,7 +29,7 @@ import { claimPort, refusedExclusive, releaseClaims, scaffoldConflict } from './
 import { appendAll, gateOrThrow, makeEvent, stepView } from './commit.ts';
 import { contractOf, devserverDown } from './devserver.ts';
 import {
-  commitAll, currentBranch, diffNames, diffStat, dirty, head, headTreeEmpty, isAncestor, mergeInProgress, mergeInto, repoRoot, sha256, statusDigest, trackedClean, worktreeRemove,
+  commitAll, currentBranch, diffNames, diffStat, dirty, head, headTreeEmpty, isAncestor, mergeInProgress, mergeInto, repoRoot, sha256, statusDigest, trackedClean,
 } from './git.ts';
 import { writeRecording } from './record.ts';
 import { requireHolder, requireRun, requireSession } from './resolve.ts';
@@ -444,15 +444,15 @@ function mergeApproved(c: Ctx, run: LoadedRun): Prepared {
   return { events: [ran, makeEvent(c.runId, 'merged', { sha, target: into! }, { corr: ran.id })], report: { merged: sha, target: into } };
 }
 
-// After `merged`, from outside the worktree: stop the dev server, remove the worktree (a failure is
-// reported, never fatal), then run_completed. The claims are released by `advance` once that append
-// has made the fold terminal (AD-20); the recording follows it.
+// After `merged`, from outside the worktree: stop the dev server, then run_completed. The worktree is
+// kept: the sandbox keeps an entered worktree's git files read-only, so removing it fails halfway.
+// The claims are released by `advance` once that append has made the fold terminal (AD-20); the
+// recording follows it.
 async function housekeeping(c: Ctx, run: LoadedRun, ctx: ScheduleCtx): Promise<Prepared> {
   const { state } = run;
   if (ctx.in_worktree || openSteps(state).length) return { events: [] };
   const server = await devserverDown(c.hash, c.runId);
-  const rm = state.worktree ? worktreeRemove(c.root, state.worktree) : { ok: true as const };
-  const report = { devserver_stopped: server.stopped, worktree_removed: rm.ok, ...(rm.ok ? {} : { worktree_error: rm.error }), port_released: state.port ?? null };
+  const report = { devserver_stopped: server.stopped, port_released: state.port ?? null };
   return { events: [makeEvent(c.runId, 'run_completed', {}, { corr: state.run_id! })], report };
 }
 

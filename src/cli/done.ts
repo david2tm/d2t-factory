@@ -5,7 +5,7 @@
 // The INTAKE conversation (3-1) is the conductor's own out.md: a parse failure appends nothing and the
 // step stays claimed; a `done` on the reported step re-reports it (reissued with the same out.md).
 import { copyFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { MAX_STEP_ATTEMPTS } from '../core/config.ts';
 import { FactoryError } from '../core/errors.ts';
 import type { AnyEvent } from '../core/events.ts';
@@ -17,7 +17,7 @@ import { withLock } from '../store/locks.ts';
 import { lockDir, playwrightDir, realish, stepDir } from '../store/paths.ts';
 import { flagString, type Args } from './args.ts';
 import { appendAll, gateOrThrow, makeEvent } from './commit.ts';
-import { repoRoot } from './git.ts';
+import { commonDir, repoRoot } from './git.ts';
 import { requireHolder, requireRun, requireSession } from './resolve.ts';
 import { commitBuilder, evidenceFor, isAgent, projection, readOutput, reissueEvent, reissueOrEscalate, reportEvents, scaffoldCopy, type Ctx } from './steps.ts';
 import { inWorktree } from './worktree.ts';
@@ -65,6 +65,7 @@ export async function done(args: Args): Promise<unknown> {
   const sha = out && pre && mine ? commitBuilder(snap.state, pre, out) : undefined;
 
   let parseError: string | undefined; // MISSING_EVIDENCE after the reissue is appended
+  let stuck: string | undefined; // an exit_worktree done from inside: how the human gets out instead
   const res = await withLock(lockDir(hash, runId), () => {
     const run = loadRun(hash, runId);
     const state = requireHolder(hash, runId, run, session);
@@ -101,7 +102,10 @@ export async function done(args: Args): Promise<unknown> {
       parseError = `cwd ${realish(cwd)} is outside the worktree ${state.worktree}`;
       events = [reissueEvent(c, { state, commands: run.commands }, st)];
     } else if (st.kind === 'exit_worktree' && inWorktree(cwd, state.worktree)) {
+      // ExitWorktree did not move this session (a no-op after /clear, say). A session started in the
+      // main checkout verifies the reissued step from its cwd (next), then merges.
       parseError = `cwd ${realish(cwd)} is still inside the worktree ${state.worktree}`;
+      stuck = `if ExitWorktree said no worktree session is active, tell the human: quit this session, start claude in ${dirname(commonDir(cwd))} and type /factory resume ${runId} there; then end the turn`;
       events = [reissueEvent(c, { state, commands: run.commands }, st)];
     } else {
       events = [makeEvent(runId, 'step_reported', { step_id: stepId, ...(note !== undefined ? { note } : {}) }, { session, actor: 'conductor', corr: stepId })];
@@ -117,7 +121,7 @@ export async function done(args: Args): Promise<unknown> {
   if (parseError !== undefined && 'escalation' in res && res.escalation) {
     throw new FactoryError('MISSING_EVIDENCE', `${parseError}; that was attempt ${res.attempts} (cap ${MAX_STEP_ATTEMPTS}): raised ${res.escalation} (Non-convergence): run factory next`);
   }
-  if (parseError !== undefined) throw new FactoryError('MISSING_EVIDENCE', `${parseError}; reissued as step ${res.reissued}: run factory next`);
+  if (parseError !== undefined) throw new FactoryError('MISSING_EVIDENCE', `${parseError}; reissued as step ${res.reissued}: ${stuck ?? 'run factory next'}`);
   // An intake re-report answers with the new step: the next `done` names it.
   if ('reported' in res && res.reported) {
     const id = res.reported;

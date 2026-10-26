@@ -41,3 +41,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dry-run-2-wrap-merge-fix.md`
   summary: Under the sandbox, the CLI's post-merge `git worktree remove` fails for the worktree the conductor entered, so a successful run ends with `worktree_error` and the worktree left behind.
   evidence: Sandboxed check on 2026-10-26: after EnterWorktree(path) then ExitWorktree(keep), deleting `<wt>/.git`, `<wt>/.claude/.cc-writes` and `.git/worktrees/<name>/commondir` gave "Operation not permitted"; a worktree the session never entered was removed fine. Removal failure is already non-fatal and reported.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dry-run-2-worktree-exit-and-removal.md`
+  summary: Kept run worktrees pile up under `<repo>/.claude/worktrees/` with their installs and copied gitignored files (`.env`). Tools run from the main checkout may see them as duplicate projects.
+  evidence: The human chose to keep worktrees silently (the sandbox blocks removal). `.git/info/exclude` hides them from git only. Jest's haste map, ESLint or `tsc` run in the target's main checkout may crawl `.claude/worktrees/*` and find duplicate modules or tests (unverified; settle on a brownfield repo with Jest after two runs). A cleanup recipe for the human's own terminal, or a `factory prune` printing one, would cover both.

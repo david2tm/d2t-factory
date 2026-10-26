@@ -65,6 +65,11 @@ test('enter_worktree and exit_worktree never run in the background', () => {
   assert.equal(mayStop(state([{ kind: 'exit_worktree', state: 'claimed' }], 'MERGED'), [shell(), sub(BUILDER)]).may, false);
 });
 
+test('a reissued exit_worktree (ExitWorktree did not move the session) may end the turn: the human goes on from the main checkout', () => {
+  assert.equal(mayStop(state([{ kind: 'exit_worktree', state: 'issued', attempt: 2 }], 'WRAP'), []).may, true);
+  assert.equal(mayStop(state([{ kind: 'exit_worktree', state: 'issued', attempt: 2 }, { state: 'issued' }], 'WRAP'), []).may, false, 'other open steps still block');
+});
+
 test('one background task carries one step; mixed sets need all of them covered', () => {
   const two = state([{ agent: BUILDER, state: 'claimed' }, { agent: BUILDER, role: 'other', state: 'claimed' }]);
   assert.equal(mayStop(two, [sub(BUILDER)]).may, false);
