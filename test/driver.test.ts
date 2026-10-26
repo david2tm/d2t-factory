@@ -478,6 +478,64 @@ test('forged prompts are consumed with NO_HUMAN_PROMPT "UNVERIFIED · transcript
   assert.equal(commands(w, id).some((e) => e.kind === 'intake_confirmed'), false);
 });
 
+test('a newest prompt missing a fact is left pending and supersedes nothing; a newer complete prompt supersedes it', () => {
+  const w = world();
+  const id = started(w, 'sa');
+  recordIntake((args) => ok(run(w, args)), 'sa');
+  const older = say(w, 'sa', 'approve gate1');
+  // Only the human_prompt fact of the newest prompt is written so far (no prompt_text, no turn).
+  const half = 'prompt-half';
+  appendLine(join(w.home, 'inbox', 'sa.jsonl'), { v: 1, id: ulid(), ts: new Date().toISOString(), session: 'sa', kind: 'human_prompt', actor: 'hook', corr: null, data: { prompt_id: half, command_name: 'd2t-factory:factory', command_args: 'approve intake' } });
+  fails(run(w, ['decide', '--session', 'sa']), 'NO_HUMAN_PROMPT', /prompt-half is not fully recorded yet/);
+  assert.deepEqual([consumed(w, half), consumed(w, older)], [null, null], 'neither forged nor superseded');
+  // Its text alone (still no human_prompt) is incomplete the other way round.
+  const half2 = 'prompt-half2';
+  appendLine(join(w.home, 'inbox', 'sa.jsonl'), { v: 1, id: ulid(), ts: new Date().toISOString(), session: 'sa', kind: 'prompt_text', actor: 'hook', corr: null, data: { prompt_id: half2, prompt: '/factory approve intake' } });
+  fails(run(w, ['decide', '--session', 'sa']), 'NO_HUMAN_PROMPT', /prompt-half2 is not fully recorded yet/);
+  assert.equal(consumed(w, half2), null);
+  // A newer complete prompt is decided and supersedes the incomplete ones too.
+  const newer = say(w, 'sa', 'approve intake');
+  assert.equal(ok(run(w, ['decide', '--session', 'sa'])).decision, 'intake_confirmed');
+  assert.deepEqual([consumed(w, newer), consumed(w, half), consumed(w, half2), consumed(w, older)], ['decided', 'superseded', 'superseded', 'superseded']);
+  assert.equal(commands(w, id).filter((e) => e.kind === 'intake_confirmed').length, 1);
+});
+
+test('a complete prompt whose turn is not in the transcript yet is re-read once before it is consumed as forged', async () => {
+  const w = world();
+  started(w, 'sa');
+  const prev = { ...process.env };
+  Object.assign(process.env, w.env);
+  try {
+    const { newestPrompt } = await import('../src/cli/prompt.ts');
+    // The turn lands while newestPrompt waits: the prompt is verified, nothing is consumed.
+    const p1 = say(w, 'sa', 'approve intake', { turn: null });
+    const waits: number[] = [];
+    const flush = (ms: number): void => {
+      waits.push(ms);
+      turnLine(join(w.projects, '-repo', 'sa.jsonl'), { type: 'user', promptId: p1, sessionId: 'sa', turnOrigin: 'human', message: { role: 'user', content: '<command-message>factory is running…</command-message>\n<command-name>/factory</command-name>\n<command-args>approve intake</command-args>' } });
+    };
+    const p = newestPrompt('sa', flush);
+    assert.equal(p.prompt_id, p1);
+    assert.equal(waits.length, 1);
+    assert.ok(waits[0] > 0 && waits[0] <= 500, `waited ${waits[0]} ms`);
+    assert.equal(consumed(w, p1), null);
+    // A matching turn needs no wait.
+    const none: number[] = [];
+    assert.equal(newestPrompt('sa', (ms) => none.push(ms)).prompt_id, p1);
+    assert.deepEqual(none, []);
+    // Still missing after the one re-read: forged, as before.
+    const p2 = say(w, 'sa', 'approve intake', { turn: null });
+    const twice: number[] = [];
+    assert.throws(() => newestPrompt('sa', (ms) => twice.push(ms)), /UNVERIFIED · transcript mismatch/);
+    assert.equal(twice.length, 1);
+    assert.equal(consumed(w, p2), 'forged');
+    assert.equal(consumed(w, p1), 'superseded');
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
+    Object.assign(process.env, prev);
+  }
+});
+
 test('the newest prompt wins and older ones are superseded; no prompt is NO_HUMAN_PROMPT', () => {
   const w = world();
   fails(run(w, ['decide', '--session', 'sa']), 'NO_HUMAN_PROMPT');

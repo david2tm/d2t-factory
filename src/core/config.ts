@@ -27,6 +27,10 @@ export const CHECK_TIMEOUT_MS = 10 * 60_000;
 export const HEALTH_TIMEOUT_MS = 60_000;
 export const HEALTH_POLL_MS = 500;
 
+// `newestPrompt`: a prompt whose turn is not in the transcript yet is re-read once after this long
+// before it is consumed as forged (the transcript may not be flushed when the CLI runs).
+export const TRANSCRIPT_REREAD_MS = 250;
+
 // Not in the AD-21 table but shared by several writers.
 export const MAX_LINE_BYTES = 96 * 1024; // AD-28: room for a step_verified carrying an ARTIFACT_EMBED_MAX body
 export const DASHBOARD_PORT_DEFAULT = 4870;

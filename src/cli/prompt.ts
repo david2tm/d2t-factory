@@ -1,4 +1,5 @@
 // Taking the session's newest /factory prompt (AD-6, AD-26).
+import { TRANSCRIPT_REREAD_MS } from '../core/config.ts';
 import { matchTurn, parseCommandArgs, type Parsed } from '../core/decision.ts';
 import { FactoryError } from '../core/errors.ts';
 import { readRedactValues } from '../store/load-run.ts';
@@ -11,23 +12,37 @@ export interface Prompt { prompt_id: string; human: HumanPromptFact; text: Promp
 
 export const MISMATCH = 'UNVERIFIED · transcript mismatch';
 
-// The newest unconsumed prompt, verified against the session's own transcript. A prompt that fails
-// the check is consumed as forged, and older ones as superseded, so neither can wedge the queue.
-export function newestPrompt(session: string): Prompt {
+const sleepSync = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
+// The newest unconsumed prompt, verified against the session's own transcript. A newest group
+// still missing a fact is left pending (its hooks may still be writing), and nothing is superseded:
+// a newer complete group supersedes it. A complete group whose turn is not in the transcript gets
+// one re-read after TRANSCRIPT_REREAD_MS (the turn may not be flushed yet); if it still fails it is
+// consumed as forged, and older ones as superseded, so neither can wedge the queue.
+export function newestPrompt(session: string, wait: (ms: number) => void = sleepSync): Prompt {
   const pending = readInbox(session).filter((g) => !isConsumed(g.prompt_id));
   const newest = pending.pop();
   if (!newest) throw new FactoryError('NO_HUMAN_PROMPT', `no unconsumed /factory prompt for session ${session}`);
-  const transcript = locateTranscript(session);
+  const { human, text } = newest;
+  if (!human || !text) throw new FactoryError('NO_HUMAN_PROMPT', `prompt ${newest.prompt_id} is not fully recorded yet (left pending; a newer /factory prompt replaces it)`);
   // The hook redacted the facts with the bound run's values; the turn is redacted the same way.
   const b = readSessionFile(session);
   const extra = b ? readRedactValues(b.repo_hash, b.run_id) : [];
-  const ok = Boolean(newest.human && newest.text && transcript && matchTurn(readTranscript(transcript), newest.human, newest.text, session, extra));
+  const matches = (): boolean => {
+    const transcript = locateTranscript(session);
+    return Boolean(transcript && matchTurn(readTranscript(transcript), human, text, session, extra));
+  };
+  let ok = matches();
+  if (!ok) {
+    wait(TRANSCRIPT_REREAD_MS);
+    ok = matches();
+  }
   if (!ok) {
     consumeWithoutCommand(newest.prompt_id, 'forged');
     supersede(pending);
     throw new FactoryError('NO_HUMAN_PROMPT', `${MISMATCH} (prompt ${newest.prompt_id})`);
   }
-  return { prompt_id: newest.prompt_id, human: newest.human!, text: newest.text!, parsed: parseCommandArgs(newest.human!.data.command_args), older: pending };
+  return { prompt_id: newest.prompt_id, human, text, parsed: parseCommandArgs(human.data.command_args), older: pending };
 }
 
 export function supersede(older: readonly PromptGroup[]): void {
