@@ -129,6 +129,16 @@ test('Bash outside the sandbox is denied for the conductor and agents; false or 
   assert.equal(b({ command: 'npm ci', dangerouslyDisableSandbox: 'true' }).deny, false, 'only a real true');
 });
 
+test('outside the sandbox is denied on any tool that takes the flag, not only Bash', () => {
+  const t = tree();
+  for (const tool of ['Monitor', 'PowerShell', 'Write', 'SomeFutureTool']) {
+    assert.deepEqual(decide(tool, { command: 'npm ci', file_path: '/tmp/x', dangerouslyDisableSandbox: true }, t.ctx(false)), { deny: true, reason: SANDBOX_DENY }, tool);
+    assert.deepEqual(decide(tool, { command: 'npm ci', dangerouslyDisableSandbox: true }, t.ctx(true)), { deny: true, reason: SANDBOX_DENY }, `${tool} from an agent`);
+  }
+  assert.equal(decide('Monitor', { command: 'tail -f log', dangerouslyDisableSandbox: false }, t.ctx(false)).deny, false);
+  assert.equal(decide('PowerShell', { command: 'Get-ChildItem' }, t.ctx(false)).deny, false);
+});
+
 test('Bash: any word resolving under a protected root is denied, except claimed step dirs', () => {
   const t = tree();
   const b = (command: string): boolean => decide('Bash', { command }, t.ctx(true)).deny;

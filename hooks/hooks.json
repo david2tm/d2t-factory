@@ -4,7 +4,7 @@
     "UserPromptExpansion": [{ "matcher": "^d2t-factory:factory$", "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/factory", "args": ["hook", "UserPromptExpansion"] }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/factory", "args": ["hook", "Stop"] }] }],
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/factory", "args": ["hook", "SessionStart"] }] }],
-    "PreToolUse": [{ "matcher": "^(Write|Edit|MultiEdit|NotebookEdit|Bash)$", "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/factory", "args": ["hook", "PreToolUse"] }] }],
+    "PreToolUse": [{ "matcher": "^(Write|Edit|MultiEdit|NotebookEdit|Bash|Monitor|PowerShell)$", "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/factory", "args": ["hook", "PreToolUse"] }] }],
     "SubagentStart": [{ "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/factory", "args": ["hook", "SubagentStart"], "async": true }] }],
     "SubagentStop": [{ "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/factory", "args": ["hook", "SubagentStop"], "async": true }] }],
     "PostToolUse": [{ "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/factory", "args": ["hook", "PostToolUse"], "async": true }] }],

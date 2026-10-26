@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { NODE_FLOOR } from '../src/core/config.ts';
+import { SANDBOX_DENY } from '../src/hooks/guard.ts';
 import { validateEvent } from '../src/core/events.ts';
 import { REDACTED } from '../src/core/redact.ts';
 import { ulid } from '../src/store/ids.ts';
@@ -142,7 +143,7 @@ test('hooks.json registers exec-form hooks, sync and async per AD-13, with the t
     assert.deepEqual(entry.hooks, [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/bin/factory', args: ['hook', ev], ...(async.includes(ev) ? { async: true } : {}) }]);
   }
   assert.equal(h.UserPromptExpansion[0].matcher, '^d2t-factory:factory$');
-  assert.equal(h.PreToolUse[0].matcher, '^(Write|Edit|MultiEdit|NotebookEdit|Bash)$');
+  assert.equal(h.PreToolUse[0].matcher, '^(Write|Edit|MultiEdit|NotebookEdit|Bash|Monitor|PowerShell)$');
   const skill = readFileSync(join(ROOT, 'skills', 'factory', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: factory\n[\s\S]*disable-model-invocation: true\n---\n/);
   assert.match(skill, /factory decide --session \$\{CLAUDE_SESSION_ID\}/);
@@ -561,8 +562,39 @@ test('guard: in a bound session, factory-owned writes are denied except the clai
   assert.match(denied(pre(s1, 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: true }, 'agent1')), /inside the sandbox \(AD-35\)/);
   silent(pre(s1, 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: false }, 'agent1'));
   silent(pre('unbound', 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: true }));
+  // Any tool that takes the flag, not only Bash.
+  for (const tool of ['Monitor', 'PowerShell', 'Write']) assert.match(denied(pre(s1, tool, { command: 'npm ci', dangerouslyDisableSandbox: true })), /inside the sandbox \(AD-35\)/, tool);
+  silent(pre(s1, 'Monitor', { command: 'tail -f log', dangerouslyDisableSandbox: false }));
   // Unbound sessions are never touched.
   silent(pre('unbound', 'Write', { file_path: inboxFile }));
+});
+
+test('guard before binding: a session with an unconsumed /factory prompt has only the sandbox flag denied; without one it is untouched', () => {
+  const w = world();
+  const pre = (session: string, tool_name: string, tool_input: object): Out =>
+    hook(w, 'PreToolUse', { ...base(w, session), hook_event_name: 'PreToolUse', tool_name, tool_input, tool_use_id: 't1' });
+  const s1 = randomUUID();
+  const s2 = randomUUID();
+  silent(sessionStart(w, s1, 'startup'));
+  silent(sessionStart(w, s2, 'startup'));
+  type(w, s1, '/factory add login');
+  type(w, s2, 'just chatting');
+  const inboxFile = join(w.home, 'inbox', `${s1}.jsonl`);
+  for (const tool of ['Bash', 'Monitor', 'PowerShell']) {
+    const o = ok(pre(s1, tool, { command: 'factory start --session x', dangerouslyDisableSandbox: true })).hookSpecificOutput;
+    assert.deepEqual([o.permissionDecision, o.permissionDecisionReason], ['deny', SANDBOX_DENY], tool);
+    silent(pre(s2, tool, { command: 'npm ci', dangerouslyDisableSandbox: true }));
+  }
+  // Nothing else changes before binding: no path check, no factory-call rule.
+  silent(pre(s1, 'Bash', { command: `echo '{}' >> ${inboxFile}` }));
+  silent(pre(s1, 'Write', { file_path: inboxFile, content: 'x' }));
+  silent(pre(s1, 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: false }));
+  // Once start consumed the prompt, the bound guard takes over; a session whose prompts are all consumed and that is not bound is untouched again.
+  const id = ok(cli(w, ['start', '--session', s1])).run_id;
+  assert.ok(id);
+  assert.equal(ok(pre(s1, 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: true })).hookSpecificOutput.permissionDecision, 'deny');
+  rmSync(join(w.home, 'sessions', `${s1}.json`));
+  silent(pre(s1, 'Bash', { command: 'npm ci', dangerouslyDisableSandbox: true }));
 });
 
 test('facts: whitelisted, redacted, one per event, in facts/<session>-<agent|main>.jsonl; unbound sessions write none', () => {

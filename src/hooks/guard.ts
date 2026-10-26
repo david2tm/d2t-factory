@@ -2,13 +2,15 @@
 // write, or a Bash command naming a path, under factoryHome() or the Claude projects dir, except
 // inside a claimed step's artifacts dir, the open INTAKE conversation's out.md dir (the conductor
 // rewrites it after `done` when the human changes something), or a plain conductor `factory …` call.
-// It also denies any Bash call that asks to run outside the sandbox (AD-35).
+// It also denies any tool call that asks to run outside the sandbox (AD-35), and, before binding,
+// does only that in a session with an unconsumed /factory prompt (the conductor's decide/start).
 import { homedir } from 'node:os';
 import { basename, dirname } from 'node:path';
 import { openSteps, type RunState } from '../core/reducer.ts';
 import { isIntakeChat } from '../core/verify.ts';
 import { loadCommands } from '../store/load-run.ts';
 import { claudeProjectsDir, factoryHome, isUnder, realish, stepDir } from '../store/paths.ts';
+import { isConsumed, readInbox } from '../store/sessions.ts';
 import { boundRun, safeId, str, type Payload } from './io.ts';
 
 // --- shell tokenizer (pure) ------------------------------------------------------------------
@@ -170,14 +172,17 @@ function checkPaths(paths: readonly string[], ctx: GuardContext, what: string): 
   return { deny: false };
 }
 
+// Any tool that takes the flag (Bash, Monitor, PowerShell, …), from the conductor or an agent; with
+// no sandbox the flag is a no-op, so the deny costs nothing.
+const unsandboxed = (input: Record<string, unknown>): boolean => input.dangerouslyDisableSandbox === true;
+
 export function decide(tool: string, input: Record<string, unknown>, ctx: GuardContext): GuardVerdict {
+  if (unsandboxed(input)) return { deny: true, reason: SANDBOX_DENY };
   if (tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit' || tool === 'NotebookEdit') {
     const fp = str(input.file_path) ?? str(input.notebook_path);
     return fp ? checkPaths([fp], ctx, tool) : { deny: false };
   }
   if (tool === 'Bash') {
-    // Conductor and agents alike; with no sandbox the flag is a no-op, so the deny costs nothing.
-    if (input.dangerouslyDisableSandbox === true) return { deny: true, reason: SANDBOX_DENY };
     const cmd = typeof input.command === 'string' ? input.command : '';
     const sh = tokenize(cmd);
     if (ctx.fromAgent && callsFactory(sh)) return { deny: true, reason: 'factory guard: agents never call factory; only the conductor does (AD-2).' };
@@ -187,13 +192,18 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: GuardC
   return { deny: false };
 }
 
+// Before binding, a session is a factory session once it has a /factory prompt not yet consumed.
+const pendingFactoryPrompt = (session: string | null): boolean => Boolean(session) && readInbox(session!).some((g) => !isConsumed(g.prompt_id));
+
 export function guard(p: Payload): unknown {
-  const b = boundRun(safeId(p.session_id));
-  if (!b) return;
+  const session = safeId(p.session_id);
+  const b = boundRun(session);
   const tool = str(p.tool_name) ?? '';
   const input = p.tool_input && typeof p.tool_input === 'object' ? (p.tool_input as Record<string, unknown>) : {};
-  // Before the run state loads, so an unreadable log can't fail this one open.
-  if (tool === 'Bash' && input.dangerouslyDisableSandbox === true) return deny(SANDBOX_DENY);
+  // Before the run state loads, so an unreadable log can't fail this one open. Unbound, only the
+  // sandbox flag is denied, and only with a pending /factory prompt; everything else is untouched.
+  if (unsandboxed(input) && (b || pendingFactoryPrompt(session))) return deny(SANDBOX_DENY);
+  if (!b) return;
   const state = loadCommands(b.hash, b.runId);
   const ctx: GuardContext = {
     cwd: str(p.cwd) ?? process.cwd(),
