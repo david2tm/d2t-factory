@@ -8,6 +8,7 @@ import { decide } from './decide.ts';
 import { devserver } from './devserver.ts';
 import { done } from './done.ts';
 import { next } from './next.ts';
+import { prune } from './prune.ts';
 import { record } from './record.ts';
 import { resume } from './resume.ts';
 import { setup } from './setup.ts';
@@ -16,9 +17,10 @@ import { status } from './status.ts';
 
 type Verb = (args: Args) => unknown | Promise<unknown>;
 
-// Every verb except setup requires --session (AD-25); each checks it via requireSession.
+// Every verb except setup and prune (read only, for the human's own terminal) requires --session
+// (AD-25); each checks it via requireSession.
 const VERBS: Record<string, Verb> = {
-  setup, start, resume, status, next, claim, done, decide, check, devserver, record, dashboard,
+  setup, start, resume, status, next, claim, done, decide, check, devserver, record, dashboard, prune,
 };
 
 export async function main(argv: readonly string[]): Promise<number> {

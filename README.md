@@ -97,6 +97,8 @@ brew install tmux
 
 Stop the run's processes, then remove its worktree, branch and state. Run these in your own terminal, because the Claude sandbox blocks signals to other processes and writes outside the session's directory.
 
+Finished and abandoned runs keep their worktrees. From the target repo, `~/Projects/d2t-factory/bin/factory prune` lists the worktrees of merged or abandoned runs (plus any git marks prunable) and prints the exact `git worktree remove`, `git worktree prune` and `git branch -D` commands to run. It runs none of them itself.
+
 ```sh
 lsof -t -iTCP:4870 -sTCP:LISTEN | xargs kill                          # the dashboard
 lsof -t -iTCP:<run port> -sTCP:LISTEN | xargs kill                    # the run's dev server

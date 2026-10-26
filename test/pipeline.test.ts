@@ -223,6 +223,49 @@ test('acceptance: the whole front half through bin/factory ends in BUILD with S1
   assert.ok(!readFileSync(join(runDir(w, id), 'commands.jsonl'), 'utf8').includes(SECRET), 'no copied secret reaches the log');
 });
 
+test('factory prune (read only): lists the worktrees of abandoned or merged runs and prunable ones, prints the remove/prune/branch commands, and runs none', (t) => {
+  const w = world();
+  const a = toScaffold(w, 'sa', t);
+  ok(decide(w, 'sa', 'abandon', { cwd: a.c.cwd }));
+  // A second, live run (the RECON cache hit skips recon): its worktree is entered.
+  const b = { ...started(w, 'sb', 'add a header'), wt: '' };
+  t.after(() => { run(w, ['devserver', 'down', '--session', 'sb']); });
+  const enter = b.c.take(byKind('enter_worktree'));
+  b.c.cwd = b.wt = enter.path;
+  assert.equal(ok(b.c.done(enter.step_id)).state, 'verified');
+  // A stray directory no run owns, and a worktree whose directory is gone (prunable).
+  mkdirSync(join(w.repo, '.claude', 'worktrees', 'factory-nobody-0000'));
+  const gone = join(w.base, 'gone-wt');
+  git(w.repo, 'worktree', 'add', '-q', '-b', 'side', gone);
+  rmSync(gone, { recursive: true });
+  const before = git(w.repo, 'worktree', 'list', '--porcelain');
+  const out = ok(run(w, ['prune'], { cwd: b.wt }));
+  const root = realpathSync(w.repo);
+  assert.equal(out.repo, root);
+  assert.deepEqual(out.worktrees, [{ run_id: a.id, phase: 'ABANDONED', path: a.wt, branch: `factory/${a.id}` }]);
+  assert.deepEqual(out.prunable.map((p: any) => p.path), [realpathSync(w.base) + '/gone-wt']);
+  assert.deepEqual(out.kept.map((k: any) => [k.path, k.why]).sort(), [
+    [join(root, '.claude', 'worktrees', `factory-${b.id}`), `run ${b.id} is SCAFFOLD`],
+    [join(root, '.claude', 'worktrees', 'factory-nobody-0000'), 'no factory run with this id for this repo'],
+  ].sort());
+  assert.deepEqual(out.commands, [
+    `git -C ${root} worktree remove --force ${a.wt}`,
+    `git -C ${root} worktree prune`,
+    `git -C ${root} branch -D factory/${a.id}`,
+  ]);
+  // Nothing was run: the worktrees, the branch and git's worktree list are as they were.
+  assert.ok(existsSync(a.wt) && existsSync(b.wt));
+  assert.equal(git(w.repo, 'worktree', 'list', '--porcelain'), before);
+  assert.ok(git(w.repo, 'branch', '--list', `factory/${a.id}`).includes(a.id));
+  // No --session needed; nothing to prune in a repo without runs.
+  const empty = join(w.base, 'empty-repo');
+  mkdirSync(empty);
+  git(empty, 'init', '-q');
+  const none = ok(run(w, ['prune'], { cwd: empty }));
+  assert.deepEqual([none.worktrees, none.prunable, none.commands, none.note], [[], [], [], 'Nothing to prune.']);
+  ok(decide(w, 'sb', 'abandon', { cwd: b.c.cwd }));
+});
+
 test('RECON cache hit: a second run on the same base commit spawns no recon and embeds the cached context; next from inside verifies enter_worktree', () => {
   const w = world();
   const r1 = started(w, 'sa');
