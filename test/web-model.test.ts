@@ -9,9 +9,11 @@ import { fold } from '../src/core/reducer.ts';
 import { readLines } from '../src/store/jsonl.ts';
 import { gate1Card, signalLostCard } from '../src/core/cards.ts';
 import {
-  actionRows, activeCardId, ago, artifactFor, budgetClock, cells, chipGloss, gateFiles, pinnedLine, proofRow, sealArtifact, shortSha, withBodies, elapsedClock, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
+  actionRows, activeCardId, agentsAt, ago, displayName, isDroid, roleColor, roleDot, roleLabel, ROSTER, STAGE_AGENT, artifactFor, budgetClock, cells, chipGloss, gateFiles, pinnedLine, proofRow, sealArtifact, shortSha, withBodies, elapsedClock, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
 } from '../src/dashboard/web/src/lib/model.ts';
-import type { Lane } from '../src/dashboard/web/src/lib/types.ts';
+import { spriteFor } from '../src/dashboard/web/src/lib/sprites.ts';
+import { REVIEWERS } from '../src/core/roster.ts';
+import type { BoardCard, Claim, Lane } from '../src/dashboard/web/src/lib/types.ts';
 
 const FIX = join(import.meta.dirname, 'fixtures');
 const load = (name: string): AnyEvent[] => readLines<AnyEvent>(join(FIX, `${name}.jsonl`)).items;
@@ -316,4 +318,51 @@ test('artifacts (6-3): lookup by artifact or step id, the gate card\'s file rows
   assert.equal(withBodies(frame, undefined).artifacts![0].body, '');
   const none = { decisions } as never;
   assert.equal(withBodies(none, {}), none, 'a frame without artifacts is the lane');
+});
+
+test('roster (7-2): every agent role has a character of its own (never the conductor\'s sprite, never its raw id); each run_check id is a check droid', () => {
+  const roles = [...REVIEWERS, 'builder', 'designer', 'recon', 'framer', 'scaffolder', 'spec-writer', 'slicer'];
+  for (const r of roles) {
+    assert.notEqual(spriteFor(r), 'vess', r);
+    assert.notEqual(spriteFor(r), 'droid', r);
+    assert.ok(ROSTER[r], r);
+    assert.notEqual(displayName(r), r);
+    assert.equal(roleLabel(r), r, 'a character\'s role label is its role');
+    assert.equal(isDroid(r), false);
+    assert.match(roleColor(r), /^var\(--role-/);
+  }
+  assert.deepEqual(Object.fromEntries(['recon', 'framer', 'scaffolder', 'spec-writer', 'slicer'].map((r) => [r, displayName(r)])),
+    { recon: 'Nyra', framer: 'Halden', scaffolder: 'Tamsin', 'spec-writer': 'Ione', slicer: 'Sorel' });
+  const droids: [string, string, string][] = [
+    ['contract.install', 'Crate', 'install check'], ['contract.health', 'Pulse', 'health check'], ['contract.test', 'Gauge', 'test check'], ['spec.lint', 'Margin', 'spec lint'], ['plan.lint', 'Tally', 'plan lint'],
+  ];
+  for (const [id, name, label] of droids) {
+    assert.equal(spriteFor(id), 'droid', id);
+    assert.deepEqual([displayName(id), roleLabel(id), isDroid(id)], [name, label, true]);
+    assert.equal(ROSTER[id].color, undefined, 'a droid has no role color');
+    assert.deepEqual(roleDot(id), { droid: true, style: '' }, `${id}: an outlined dot, no fill`);
+  }
+  for (const r of roles) assert.deepEqual(roleDot(r), { droid: false, style: `background:var(--role-${r})` }, r);
+  // Evidence-only checks are no actor: no droid, their check name stays.
+  for (const id of ['git.baseline', 'git.worktree_clean', 'git.deps', 'git.merged', 'devserver']) assert.deepEqual([displayName(id), isDroid(id)], [id, false]);
+  // An unknown role: its raw role as the name, the conductor's sprite as a fallback.
+  assert.deepEqual([displayName('mystery'), roleLabel('mystery'), spriteFor('mystery'), isDroid('mystery')], ['mystery', 'mystery', 'vess', false]);
+});
+
+test('agentsAt (7-2): each In Progress stage card shows its agent (none at INTAKE or WRAP); reviewers at a slice in review; running check droids after, deduped', () => {
+  const at = (c: Partial<BoardCard>): string[] => agentsAt({ kind: 'stage', label: 'SPEC', column: 'in_progress', claims: [], ...c });
+  const want: Record<string, string[]> = { INTAKE: [], RECON: ['recon'], FRAME: ['framer'], SCAFFOLD: ['scaffolder'], SPEC: ['spec-writer'], DESIGN: ['designer'], 'SLICE PLAN': ['slicer'], WRAP: [] };
+  for (const [label, who] of Object.entries(want)) assert.deepEqual(at({ label }), who, label);
+  assert.deepEqual(Object.values(STAGE_AGENT).filter((r) => spriteFor(r) === 'vess'), []);
+  // Not In Progress or In Review: no crew.
+  for (const column of ['backlog', 'needs_you', 'done'] as const) assert.deepEqual(at({ label: 'SCAFFOLD', column, checks_running: ['contract.health'] }), []);
+  // Droids beside the agent, or alone.
+  assert.deepEqual(at({ label: 'SCAFFOLD', checks_running: ['contract.health'] }), ['scaffolder', 'contract.health']);
+  assert.deepEqual(at({ label: 'WRAP', checks_running: ['contract.health', 'contract.test', 'contract.health'] }), ['contract.health', 'contract.test']);
+  // Slices: the builder, or the reviewers that reported (superseded ones left out), then the droid.
+  const rv = (role: string, superseded = false): Claim => ({ step_id: role, role, kind: 'spawn', state: 'verified', reported_at: '', overdue_at: null, waiting_on: null, waiting_for: null, superseded, evidence: [] });
+  assert.deepEqual(at({ kind: 'slice', label: 'S1', checks_running: ['contract.test'] }), ['builder', 'contract.test']);
+  assert.deepEqual(at({ kind: 'slice', label: 'S1', column: 'in_review', claims: [rv('builder'), rv('reviewer-code'), rv('reviewer-ux', true)], checks_running: ['contract.test'] }), ['reviewer-code', 'contract.test']);
+  // Over a real projection: names are the roster's, never a raw id.
+  for (const c of lane(happy).cards) for (const r of agentsAt(c)) assert.notEqual(displayName(r), r);
 });

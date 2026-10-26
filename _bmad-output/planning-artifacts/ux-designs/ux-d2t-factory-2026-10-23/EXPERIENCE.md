@@ -80,10 +80,10 @@ design: DESIGN.md
 | Stage (`pipeline-stages.md`) | Card(s) | Path on board | Human decision |
 |---|---|---|---|
 | INTAKE | Stage card `INTAKE` | In Progress (Master d2t attached) → Done | Seal `intake confirmed · Master d2t`; timeline pip. No Needs You card — d2t is already in the conversation. Slice time box set here (default 30 min, CAP-2). |
-| RECON / FRAME | Stage card `RECON` or `FRAME` | In Progress → Done | None. No sprite on the card; the conductor in the Swimlane header owns this stage. Origin tag `brownfield` or `greenfield` (CAP-3). |
-| SCAFFOLD | Stage card `SCAFFOLD` | In Progress → Done | On failure, after the factory's one repair round, the card moves to Needs You tagged `ESCALATION`, reason label `Scaffold failed:` (CAP-4; see Open items). |
-| SPEC ∥ DESIGN | Stage cards `SPEC` and `DESIGN` (DESIGN omitted when the app has no UI surface or INTAKE marked the task UI-free) | Both In Progress in parallel (Sela Venn on DESIGN) → merge into one Needs You card (GATE) `Gate 1 — Spec + Design ready` → both to Done | Seal `Gate 1 · approved by Master d2t` on each (CAP-5, CAP-6). Sela Venn stands by beside the Needs You card (GATE). Not approved → rework (Cross-stage events). |
-| SLICE PLAN | Stage card `SLICE PLAN` | In Progress → Needs You card (GATE, Gate 2) → Done | Seal `Gate 2 · approved by Master d2t` (CAP-7). On approval slice cards are dealt into Backlog. Not approved → rework (Cross-stage events). |
+| RECON / FRAME | Stage card `RECON` or `FRAME` | In Progress → Done | None. Nyra (recon) or Halden (framer) stands at the card while it is In Progress. Origin tag `brownfield` or `greenfield` (CAP-3). |
+| SCAFFOLD | Stage card `SCAFFOLD` | In Progress (Tamsin; check droids beside her while the contract checks run) → Done | On failure, after the factory's one repair round, the card moves to Needs You tagged `ESCALATION`, reason label `Scaffold failed:` (CAP-4; see Open items). |
+| SPEC ∥ DESIGN | Stage cards `SPEC` and `DESIGN` (DESIGN omitted when the app has no UI surface or INTAKE marked the task UI-free) | Both In Progress in parallel (Ione on SPEC, Sela Venn on DESIGN) → merge into one Needs You card (GATE) `Gate 1 — Spec + Design ready` → both to Done | Seal `Gate 1 · approved by Master d2t` on each (CAP-5, CAP-6). Sela Venn stands by beside the Needs You card (GATE). Not approved → rework (Cross-stage events). |
+| SLICE PLAN | Stage card `SLICE PLAN` | In Progress (Sorel) → Needs You card (GATE, Gate 2) → Done | Seal `Gate 2 · approved by Master d2t` (CAP-7). On approval slice cards are dealt into Backlog. Not approved → rework (Cross-stage events). |
 | BUILD LOOP (board label `BUILD`) | Slice cards `S1…Sn` | Backlog → In Progress (Brix, Time box meter) → In Review (roster, Verdict list) → Done (`VERIFIED`) | Findings send the card back to In Progress; meta shows `round n/2` (max 2, CAP-8). An escalation moves the slice card itself into Needs You tagged `ESCALATION` with its reason label; d2t's ruling seals the slice `escalation ruled · Master d2t`. Independent slices pipeline: S*n* in review while S*n+1* is in progress. |
 | WRAP | Stage card `WRAP` | In Progress → Needs You card (MERGE) → Done | Seal `merge OK · Master d2t` (CAP-13). Card content and waiting state: Merge waiting and Conflicted merge (State Patterns). |
 
@@ -167,7 +167,7 @@ Rules:
 
 - State words are uppercase: `CLAIMED`, `VERIFIED`, `UNVERIFIED`, `AT RISK`, `CUT`.
 - Reason labels come from the reason-label table and lead in bold.
-- Characters use their display (short) name everywhere — `Quill`, `Tarvus`, `Pell`, `Adm. Vess Korrin` (`DESIGN.md` Character roster).
+- Characters use their display (short) name everywhere — `Quill`, `Tarvus`, `Pell`, `Nyra`, `Adm. Vess Korrin` — and every agent role and CLI check has one; no raw role or check id appears where a name belongs (`DESIGN.md` Character roster).
 - Each time names the event it measures: `raised 14:36`, `last seen 4m ago`, `1:12 left of 2:00`.
 - No exclamation marks, no emoji.
 
@@ -195,7 +195,7 @@ Behavioral. Visual specs live in `DESIGN.md` Components (same names).
 | Needs You card | Needs You column | Enters with beacon; leaves when the state machine records the decision; a seal stays on the affected card. |
 | Type tag | Needs You card | One of `GATE`, `ESCALATION`, `CUT`, `MERGE`, `SIGNAL LOST`. |
 | Action slot | Needs You card | Shows each command + Copy button, with its `then` line below it, and the card's reply line once at the bottom. Reserved footprint for a future action button. No other control. |
-| Agent sprite | Cells, headers | Each agent is at one card at a time; several agents may share a card (review cluster). Idle agents stand by beside the relevant card. Lost agents dissolve to static. Decorative; name + role are text. |
+| Agent sprite | Cells, headers | Each agent is at one card at a time; several agents may share a card (review cluster). Idle agents stand by beside the relevant card. Lost agents dissolve to static. Decorative; name + role are text. Check droids (`DESIGN.md` Check droids) appear while their check runs and leave when it is verified. A check's claim, verdict and drawer rows name its droid. |
 | Done stack | Done cells | **Canonical rule.** Newest first; beyond 5 items, the 4 newest stay visible and the rest collapse into a `+N` deck naming them. The deck carries a seal row: one gold glyph per seal on its collapsed cards, each a focusable button that opens the Evidence drawer (Decision); its accessible name is the seal line. While a glyph's drawer is open, that glyph is the selected source (gold outline) and the deck carries `EVIDENCE ▸`. The deck itself is not expandable in the POC; no seal is ever unreachable. → mock: `mockups/key-wrap.html` States 01. |
 | Empty cell | Any cell with a pending reason | Shows why it's empty and what fills it (`AWAITING GATE 1`). Idle cells with no pending reason stay blank. |
 | Evidence drawer | Right dock | Three variants (table below). Source card gets outline + `EVIDENCE ▸`. One at a time; clicking another chip or seal swaps content. Close via `×` or `Esc`, in both modes. → mock: `mockups/key-wrap.html` drawer (Gate 2) and States 03 (escalation). |

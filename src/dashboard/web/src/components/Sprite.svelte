@@ -38,11 +38,23 @@
   .spr-kael .fx { animation-duration: 1.8s; }
   .spr-d2t .fx-b { animation: look 6s infinite; }
   .spr-pell .fx-b { animation: pblink 3.4s infinite; }
+  /* 7-2. Halden's blueprint rolls and unrolls; Ione's tablet lines appear; Tamsin's lamp and Sorel's
+     markers blink; Nyra's scanner cone sweeps in 3 frames (near, far, none); a check droid's status
+     light blinks holo over its slate idle frame. Reduced motion stops all of them on frame 1. */
+  .spr-halden .fx { animation-duration: 1.4s; }
+  .spr-ione .fx { animation-duration: 1.2s; }
+  .spr-tamsin .fx { animation-duration: .9s; }
+  .spr-sorel .fx { animation-duration: 1s; }
+  .spr-droid .fx { animation-duration: .8s; }
+  .spr-nyra .fx-a { animation: cone1 1.2s infinite; }
+  .spr-nyra .fx-b { animation: cone2 1.2s infinite; }
   /* Master d2t looks up while a card enters, and holds the pose (static) under reduced motion. */
   .fx-b.hold { opacity: 1 !important; animation: none !important; }
   @keyframes fa { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0; } }
   @keyframes fb { 0%, 49.9% { opacity: 0; } 50%, 100% { opacity: 1; } }
   @keyframes look { 0%, 72% { opacity: 0; } 73%, 92% { opacity: 1; } 93%, 100% { opacity: 0; } }
+  @keyframes cone1 { 0%, 33.2% { opacity: 1; } 33.3%, 100% { opacity: 0; } }
+  @keyframes cone2 { 0%, 33.2% { opacity: 0; } 33.3%, 66.5% { opacity: 1; } 66.6%, 100% { opacity: 0; } }
   @keyframes pblink { 0%, 90% { opacity: 0; } 91%, 96% { opacity: 1; } 97%, 100% { opacity: 0; } }
 
   .spr-brix { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--holo) 35%, transparent)); }

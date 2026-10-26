@@ -205,9 +205,10 @@ export function needsCell(lane: Lane): { groups: NeedsGroup[]; loose: BoardCard[
 
 // --- people --------------------------------------------------------------------------------------
 
-// DESIGN Character roster: display (short) names by role. Roles without a character (recon, framer,
-// scaffolder, spec-writer, slicer, checks) are shown by their role and drawn as the conductor.
-export const ROSTER: Record<string, { name: string; color: string }> = {
+// DESIGN Character roster and Check droids: display (short) names by role, and by run_check id (7-2).
+// Characters carry their role color; the check droids carry a role label and an outlined dot
+// instead (no role color). An unknown role shows as itself, drawn as the conductor (sprites.ts).
+export const ROSTER: Record<string, { name: string; color?: string; label?: string; outline?: true }> = {
   builder: { name: 'Brix', color: 'var(--role-builder)' },
   designer: { name: 'Sela Venn', color: 'var(--role-designer)' },
   'reviewer-code': { name: 'Tarvus', color: 'var(--role-reviewer-code)' },
@@ -215,10 +216,28 @@ export const ROSTER: Record<string, { name: string; color: string }> = {
   'reviewer-ux': { name: 'Mira Sol', color: 'var(--role-reviewer-ux)' },
   'reviewer-a11y': { name: 'Pell', color: 'var(--role-reviewer-a11y)' },
   'reviewer-ui': { name: 'Quill', color: 'var(--role-reviewer-ui)' },
+  recon: { name: 'Nyra', color: 'var(--role-recon)' },
+  framer: { name: 'Halden', color: 'var(--role-framer)' },
+  scaffolder: { name: 'Tamsin', color: 'var(--role-scaffolder)' },
+  'spec-writer': { name: 'Ione', color: 'var(--role-spec-writer)' },
+  slicer: { name: 'Sorel', color: 'var(--role-slicer)' },
+  'contract.install': { name: 'Crate', label: 'install check', outline: true },
+  'contract.health': { name: 'Pulse', label: 'health check', outline: true },
+  'contract.test': { name: 'Gauge', label: 'test check', outline: true },
+  'spec.lint': { name: 'Margin', label: 'spec lint', outline: true },
+  'plan.lint': { name: 'Tally', label: 'plan lint', outline: true },
 };
 
 export const displayName = (role: string): string => ROSTER[role]?.name ?? role;
 export const roleColor = (role: string): string => ROSTER[role]?.color ?? 'var(--line-strong)';
+// The plain role label beside a name: the role itself, or a check droid's label (`health check`).
+export const roleLabel = (role: string): string => ROSTER[role]?.label ?? role;
+// A check droid (7-2): an outlined dot, never a role color.
+export const isDroid = (role: string): boolean => ROSTER[role]?.outline === true;
+// A role's 6px dot: a check droid's is outlined (class `droid`, no inline fill); anyone else's is
+// filled with their role color.
+export const roleDot = (role: string): { droid: boolean; style: string } =>
+  (isDroid(role) ? { droid: true, style: '' } : { droid: false, style: `background:${roleColor(role)}` });
 export const isReviewer = (role: string): boolean => role.startsWith('reviewer');
 export const decider = (by: string): string => (by === 'human' ? 'Master d2t' : by);
 
@@ -236,6 +255,18 @@ export function reviewersAtWork(card: Pick<BoardCard, 'kind' | 'state' | 'roster
   if (card.state !== 'IN_REVIEW' || pendingReviewers(card).length) return false;
   const built = card.claims.filter((c) => !isReviewer(c.role)).map((c) => c.reported_at).sort().at(-1) ?? '';
   return !card.claims.some((c) => isReviewer(c.role) && !c.superseded && c.reported_at > built);
+}
+
+// Who stands at a card (7-2): at an In Progress card its stage's agent (the builder at a slice;
+// INTAKE and WRAP are the conductor's own and show none), at a slice In Review the reviewers that
+// reported, then the check droids of its running checks, deduped. Other columns show no crew.
+export const STAGE_AGENT: Record<string, string> = { RECON: 'recon', FRAME: 'framer', SCAFFOLD: 'scaffolder', SPEC: 'spec-writer', DESIGN: 'designer', 'SLICE PLAN': 'slicer' };
+export function agentsAt(card: Pick<BoardCard, 'kind' | 'label' | 'column' | 'claims' | 'checks_running'>): string[] {
+  let who: string[];
+  if (card.column === 'in_progress') who = card.kind === 'slice' ? ['builder'] : STAGE_AGENT[card.label] ? [STAGE_AGENT[card.label]] : [];
+  else if (card.column === 'in_review') who = card.claims.filter((x) => isReviewer(x.role) && !x.superseded).map((x) => x.role);
+  else return [];
+  return [...new Set([...who, ...(card.checks_running ?? [])])];
 }
 
 // The Time box meter of a live slice (3-4): `12 / 30 min`, the share used (0..1), and over (amber)

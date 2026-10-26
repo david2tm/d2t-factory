@@ -53,6 +53,7 @@ export interface BoardCard {
   roster?: string[];
   timebox_ends_at?: string; // a live slice's Time box (3-4): when its net time reaches timebox_min
   timebox_min?: number;
+  checks_running?: string[]; // 7-2: the card's open run_check ids, in issue order (their droids stand beside it)
 }
 
 export interface NeedsYou { ask_id: string; raised_at: string | null; slice?: string; card: Card; files?: string[] } // files: artifact ids (Gate 1, Gate 2)

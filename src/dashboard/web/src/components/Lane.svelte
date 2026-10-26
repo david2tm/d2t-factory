@@ -2,8 +2,8 @@
   // One run's swimlane: the Swimlane header (conductor, run id, task, origin, stage, the Budget
   // clock, the Stage track) and one row of five cells. A labeled region: `Run <run-id>`.
   import { receive, send } from '../lib/glide.ts';
-  import { activeCardId, ago, cells, emptyCellCopy, isReviewer, laneKey, needsCell, pausedNotice, stageTrack, stageWord } from '../lib/model.ts';
-  import type { BoardCard, Lane } from '../lib/types.ts';
+  import { activeCardId, agentsAt, ago, cells, emptyCellCopy, laneKey, needsCell, pausedNotice, stageTrack, stageWord } from '../lib/model.ts';
+  import type { Lane } from '../lib/types.ts';
   import Agent from './Agent.svelte';
   import BudgetClock from './BudgetClock.svelte';
   import DoneStack from './DoneStack.svelte';
@@ -30,13 +30,9 @@
   };
   const STEP_SR: Record<string, string> = { done: 'done', now: 'current', future: 'not started', passed: 'approved', waiting: 'waiting on you', hollow: 'not reached' };
 
-  // Who stands at a card: the builder at a slice in progress, the designer at DESIGN, and the
-  // reviewers who reported on a slice in review. Stages the conductor owns have no sprite.
-  function agentsAt(card: BoardCard): string[] {
-    if (card.column === 'in_progress') return card.kind === 'slice' ? ['builder'] : card.label === 'DESIGN' ? ['designer'] : [];
-    if (card.column === 'in_review') return [...new Set(card.claims.filter((x) => isReviewer(x.role) && !x.superseded).map((x) => x.role))];
-    return [];
-  }
+  // Who stands at a card (agentsAt, model.ts): its stage's character or the builder, the reviewers
+  // who reported on a slice in review, and the check droids of its running checks. The conductor
+  // stands only in the Swimlane header.
 </script>
 
 <section class="lane" aria-label="Run {lane.run_id}">
@@ -151,6 +147,6 @@
   .cell { padding: 14px 0 6px; position: relative; z-index: 1; display: flex; flex-direction: column; gap: var(--card-gap); min-width: 0; }
   .cell.needs { padding: 14px 6px 6px; }
   .slot { display: flex; flex-direction: column; align-items: stretch; min-width: 0; }
-  .crew { display: flex; justify-content: center; gap: 6px; margin-bottom: 10px; position: relative; z-index: 3; }
+  .crew { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 6px; margin-bottom: 10px; position: relative; z-index: 3; }
   .crew.cluster { justify-content: space-around; }
 </style>

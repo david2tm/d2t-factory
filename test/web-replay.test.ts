@@ -11,7 +11,8 @@ import { fold } from '../src/core/reducer.ts';
 import { buildTimeline, type Timeline } from '../src/core/timeline.ts';
 import type { LoadedRecording } from '../src/store/recording.ts';
 import type { Selection } from '../src/dashboard/web/src/lib/drawer.ts';
-import { chipState, laneKey } from '../src/dashboard/web/src/lib/model.ts';
+import { agentsAt, chipState, displayName, laneKey } from '../src/dashboard/web/src/lib/model.ts';
+import { spriteFor } from '../src/dashboard/web/src/lib/sprites.ts';
 import {
   appliedCount, boardAt, boardKey, hms, needsSummary, nextPip, pipLayout, pips, prevPip, recordedDay, replayRoute, replayShortcut, selectionPresent,
 } from '../src/dashboard/web/src/lib/replay.ts';
@@ -355,4 +356,26 @@ test('artifact bodies (6-3): frames carry artifacts without a body, each body si
   const sel: Selection = { kind: 'artifact', lane: laneKey(lane), card: 'stage:SPEC', artifact: verified.id, src: 'x' };
   assert.equal(selectionPresent(sel, boardAt(rec, end)), true);
   assert.equal(selectionPresent(sel, boardAt(rec, ms(verified.ts) - 1)), false, 'before its step_verified the artifact is not on the board');
+});
+
+test('names (7-2): over every pipeline-acceptance frame, no agent or check claim and no crew member shows a raw role or run_check id, none is drawn as the conductor, and check droids stand only while their checks run', () => {
+  const rec = recOf('pipeline-acceptance');
+  const CHECKS = ['contract.install', 'contract.health', 'contract.test', 'spec.lint', 'plan.lint'];
+  let checkClaims = 0;
+  let droidsShown = 0;
+  for (const f of rec.frames) for (const c of f.cards) {
+    // Agent and check claims; the conductor's own steps (ask_human, enter/exit_worktree) have no role.
+    for (const cl of c.claims.filter((x) => x.kind === 'spawn' || x.kind === 'resume' || x.kind === 'run_check')) {
+      assert.notEqual(displayName(cl.role), cl.role, `${c.id} ${cl.role}`);
+      assert.notEqual(spriteFor(cl.role), 'vess', cl.role);
+      if (CHECKS.includes(cl.role)) checkClaims++;
+    }
+    for (const r of agentsAt(c)) {
+      assert.notEqual(displayName(r), r, `${c.id} crew ${r}`);
+      if (CHECKS.includes(r)) { droidsShown++; assert.ok(c.checks_running?.includes(r)); }
+    }
+    if (c.checks_running) assert.ok(c.checks_running.length > 0, 'present only when non-empty');
+  }
+  assert.ok(checkClaims > 0, 'the recording has check claims');
+  assert.ok(droidsShown > 0, 'the recording shows check droids');
 });

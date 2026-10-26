@@ -414,6 +414,7 @@ flowchart BT
     - verdicts;
     - merge resolutions;
     - the pinned artifacts: at `step_verified` of an intake, spec-writer, designer or slicer step, the redacted body (≤ `ARTIFACT_EMBED_MAX`, else truncated and marked), its sha256 and path.
+  - per card, `checks_running`: its run_check steps issued and not yet verified (display only).
   - The dashboard never reads `artifacts/`.
 
 ### AD-24 — Step lifecycle
@@ -750,7 +751,6 @@ d2t-factory/                      # plugin root
 | EXPERIENCE: test evidence "verified by hook" | Cites the CLI's `check_ran`. A hook-observed test run is "supporting" (AD-7) |
 | EXPERIENCE: run ID `r-7f3a` | `<slug>-<base32×4>` (AD-9) |
 | EXPERIENCE: Decision drawer `terminal response` | The `prompt_text` verbatim (AD-6) |
-| EXPERIENCE: agents without a roster character (`recon`, `framer`, `scaffolder`, `spec-writer`, `slicer`) | Shown as the conductor |
 
 ## Open Questions
 

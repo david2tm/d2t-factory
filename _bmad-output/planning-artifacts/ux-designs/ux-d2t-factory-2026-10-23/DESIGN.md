@@ -72,6 +72,11 @@ colors:
   role-reviewer-ux: '#ff8fb1'
   role-reviewer-a11y: '#dfe8f7'
   role-reviewer-ui: '#3fcfa6'
+  role-recon: '#b8c25e'
+  role-framer: '#b8c25e'
+  role-scaffolder: '#d68ae6'
+  role-spec-writer: '#8ea2ff'
+  role-slicer: '#f2c7a0'
   # Shared sprite palette (16 core + 4 accents; light from top-left)
   sprite-void: '#0a0e1a'
   sprite-navy: '#1b2440'
@@ -425,7 +430,7 @@ Three chromatic families — holo cyan, Republic gold, danger red-orange — eac
 | **Amber** | Budget pressure, nothing else | The AT RISK edge on Backlog slices once the cut point is reached, and the Budget clock's `+m:ss over` readout past 0:00 | `amber`; ink `amber-text` |
 | **Nebula** | Atmosphere only | Three soft radial washes behind the starfield (opacities in Elevation & Depth) | `gold`, `nebula-violet`, `holo` |
 
-**Role colors** (`role-*`) appear as a 6px square dot before each role label, as the verdict-list dot, and as each character's sprite accent. They identify *who*, never *state*; the role-to-color mapping lives in the Character roster. Kael Nox's crimson is a character color, visibly distinct from danger red-orange and never used for state; his role label uses `role-reviewer-security-text`.
+**Role colors** (`role-*`) appear as a 6px square dot before each role label, as the verdict-list dot, and as each character's sprite accent. They identify *who*, never *state*; the role-to-color mapping lives in the Character roster. Kael Nox's crimson is a character color, visibly distinct from danger red-orange and never used for state; his role label uses `role-reviewer-security-text`. Recon and framer share olive: they fill the same stage slot and never appear in one lane. New role colors avoid the state hues and their neighbours (gold/sand, cyan, red-orange/copper, amber) and meet the 3:1 non-text floor on space-2.
 
 ### Contrast targets (screen-share legibility)
 
@@ -606,7 +611,7 @@ YAML keys are the kebab-case form of these names (for example, Slice card → `s
   - **SIGNAL LOST** — keeps the gold frame but carries a danger Type tag. → mock: key-dashboard States 02
 - **Type tag** — 22px tall, solid, `tag` type tracked 0.14em, blinking circle lamp: `GATE`, `ESCALATION`, `CUT`, and `MERGE` on gold with `gold-ink`; `SIGNAL LOST` on `danger` with `on-danger`.
 - **Action slot** — dashed `gold-a3` box, `space-0` 55% fill. Label `> RESPOND IN TERMINAL` in gold `tag`; below, the command in a `space-0` field (`command` type, white, `$ ` prompt in `text-3`) and a 30×30px gold-outlined Copy button with a pixel copy glyph. Each command row is followed by its `then` line in `body-sm`, `needs-text-3`; the card's reply line closes the slot in `body-sm`, `text-3`. With several commands, the rows stack inside one slot. The slot's footprint is reserved for a future action button.
-- **Agent sprite** — pixel character at 2× + name (`label`, `text`) + role label (`meta`, `holo`, prefixed by the 6px role-color dot); Kael's role label uses `role-reviewer-security-text`. A holo-pad glows under the feet. Agents stand above the card they work (overlapping its top edge), cluster around a card in review (two above, two below), or sit beside a Needs You card when standing by (horizontal "side" layout). See Pixel sprites below.
+- **Agent sprite** — pixel character at 2× + name (`label`, `text`) + role label (`meta`, `holo`, prefixed by the 6px role-color dot); Kael's role label uses `role-reviewer-security-text`. A holo-pad glows under the feet. Agents stand above the card they work (overlapping its top edge), cluster around a card in review (two above, two below), or sit beside a Needs You card when standing by (horizontal "side" layout). See Pixel sprites below. Every agent role has a character (Character roster); none is drawn as the conductor. The conductor appears only in the Swimlane header. Check droids stand beside the card whose checks are running, at the agent scale; they leave when their check is verified.
 
 ### Panels
 
@@ -669,6 +674,25 @@ All original characters, Old Republic in spirit. Name + role label always visibl
 | Mira Sol | reviewer-ux | Impatient smuggler-pilot | `{colors.role-reviewer-ux}` pink | 2-frame working effect |
 | P-11 "Pell" (`Pell`) | reviewer-a11y | Protocol droid | `{colors.role-reviewer-a11y}` silver | Photoreceptor blink |
 | Envoy Quill (`Quill`) | reviewer-ui | Image-obsessed diplomat | `{colors.role-reviewer-ui}` teal | 2-frame working effect, 1.6s cycle |
+| Surveyor Nyra Kest (`Nyra`) | recon | Hooded scout with a survey scanner | `{colors.role-recon}` olive `#b8c25e` | Scanner sweep: a 3-frame cone in front of her |
+| Shipwright Halden Roe (`Halden`) | framer | Shipwright with a blueprint roll | `{colors.role-framer}` olive `#b8c25e` (shared with recon) | Blueprint unrolls and rolls, 1.4 s cycle |
+| Dockmaster Tamsin Brann (`Tamsin`) | scaffolder | Dock officer with a cargo manifest and a hand lamp | `{colors.role-scaffolder}` orchid `#d68ae6` | Hand lamp blinks as she checks the manifest |
+| Magistrate Ione Vatch (`Ione`) | spec-writer | Formal robes, charter tablet | `{colors.role-spec-writer}` periwinkle `#8ea2ff` | Tablet lines appear one by one, 1.2 s cycle |
+| Tactician Sorel Danth (`Sorel`) | slicer | Officer at a small holo-map, moving markers | `{colors.role-slicer}` peach `#f2c7a0` (`sprite-skin-light`) | Markers blink into slots on the map |
+
+### Check droids
+
+The CLI's own checks, drawn as one shared droid chassis (small box body on treads, one photoreceptor, a status light). They are instruments, not agents: no role color; their dot is a 6px outlined square (1px text-2). Name + role label as for characters.
+
+| Name (short) | Check | Role label |
+|---|---|---|
+| LX-4 "Crate" (`Crate`) | contract.install | install check |
+| VT-2 "Pulse" (`Pulse`) | contract.health | health check |
+| TQ-6 "Gauge" (`Gauge`) | contract.test | test check |
+| MR-3 "Margin" (`Margin`) | spec.lint | spec lint |
+| PL-5 "Tally" (`Tally`) | plan.lint | plan lint |
+
+Signature: the status light blinks in sprite-holo while the check runs; frame 1 when idle.
 
 ### Mock deviations — spine wins
 

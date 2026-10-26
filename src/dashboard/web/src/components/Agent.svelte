@@ -1,17 +1,19 @@
 <script lang="ts">
-  // An agent standing at a card: sprite on a holo-pad, display name and role label (real text).
-  import { displayName, roleColor } from '../lib/model.ts';
+  // An agent standing at a card: sprite on a holo-pad, display name and role label (real text). A
+  // check droid's dot is outlined, never a role color (7-2).
+  import { displayName, roleDot, roleLabel } from '../lib/model.ts';
   import { spriteFor } from '../lib/sprites.ts';
   import Sprite from './Sprite.svelte';
 
   let { role, lost = false, delay = 0, note = '' }: { role: string; lost?: boolean; delay?: number; note?: string } = $props();
+  const dot = $derived(roleDot(role));
 </script>
 
 <div class="agent">
   <span class="pad" aria-hidden="true"></span>
   <Sprite name={spriteFor(role)} scale={3} {lost} {delay} />
   <span class="nm">{displayName(role)}</span>
-  <span class="rl" class:sec={role === 'reviewer-security'}><i style="background:{roleColor(role)}"></i>{role}{note ? ` · ${note}` : ''}</span>
+  <span class="rl" class:sec={role === 'reviewer-security'}><i class:droid={dot.droid} style={dot.style}></i>{roleLabel(role)}{note ? ` · ${note}` : ''}</span>
 </div>
 
 <style>
@@ -21,4 +23,5 @@
   .rl { font: 11px/1.25 var(--mono); color: var(--holo); white-space: nowrap; }
   .rl.sec { color: var(--role-reviewer-security-text); }
   .rl i { display: inline-block; width: 6px; height: 6px; margin-right: 4px; vertical-align: 1px; }
+  .rl i.droid { background: transparent; border: 1px solid var(--text-2); }
 </style>

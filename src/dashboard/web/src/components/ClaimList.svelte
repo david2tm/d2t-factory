@@ -1,8 +1,9 @@
 <script lang="ts">
-  // A card's claims, one row each: role dot · display name · (verdict word) · mini Claim chip.
+  // A card's claims, one row each: role dot · display name · (verdict word) · mini Claim chip. A check
+  // droid's dot is outlined, never a role color (7-2).
   // Verdicts are agent claims, never gold. `reviewing` adds a pending row with no chip; `pending`
   // adds one per rostered reviewer that has no claim yet.
-  import { displayName, isReviewer, roleColor, verdictText, verdictTone } from '../lib/model.ts';
+  import { displayName, isReviewer, roleColor, roleDot, verdictText, verdictTone } from '../lib/model.ts';
   import type { Claim } from '../lib/types.ts';
   import ClaimChip from './ClaimChip.svelte';
 
@@ -14,7 +15,7 @@
 {#if agents.length}
   <ul class="rows">
     {#each agents as c (c.step_id)}
-      <li class:void={c.superseded}><i class="dot" style="background:{roleColor(c.role)}"></i><span class="nm">{displayName(c.role)}</span><ClaimChip {lane} {card} claim={c} {now} mini /></li>
+      <li class:void={c.superseded}><i class="dot" class:droid={roleDot(c.role).droid} style={roleDot(c.role).style}></i><span class="nm">{displayName(c.role)}</span><ClaimChip {lane} {card} claim={c} {now} mini /></li>
     {/each}
   </ul>
 {/if}
@@ -22,7 +23,7 @@
   <ul class="rows verdicts">
     {#each reviews as c (c.step_id)}
       <li class:void={c.superseded}>
-        <i class="dot" style="background:{roleColor(c.role)}"></i><span class="nm">{displayName(c.role)}</span>
+        <i class="dot" class:droid={roleDot(c.role).droid} style={roleDot(c.role).style}></i><span class="nm">{displayName(c.role)}</span>
         {#if c.verdict}<span class="v {verdictTone(c.verdict)}" aria-label={c.verdict} title={c.verdict}>{verdictText(c.verdict)}</span>{/if}
         <ClaimChip {lane} {card} claim={c} {now} mini />
       </li>
@@ -40,6 +41,7 @@
   li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font: 12px/1.2 var(--sans); color: var(--text-2); min-width: 0; }
   li > :global(.chip) { margin-left: auto; }
   .dot { width: 6px; height: 6px; flex: none; }
+  .dot.droid { background: transparent; border: 1px solid var(--text-2); }
   .nm { min-width: 0; overflow-wrap: anywhere; }
   .v { margin-left: auto; font: 700 11px/1 var(--mono); letter-spacing: .06em; }
   .v + :global(.chip) { margin-left: 0; }

@@ -3,7 +3,7 @@
 // SIGNAL LOST overlay (`live`) is added by the server at serve time and never cached.
 import { budgetOf, openCutAsk, timeboxView } from './budget.ts';
 import { HEARTBEAT_INTERVAL_MS, SIGNAL_LOST_MISSED } from './config.ts';
-import type { AnyEvent, ArtifactEmbed, Card, Stage } from './events.ts';
+import type { AnyEvent, ArtifactEmbed, Card, Check, Stage } from './events.ts';
 import { isDecisionKind, TOOL_FACT_KINDS } from './events.ts';
 import { boardStage, fold, isTerminal, openSteps, type RunState, type SliceState, type Step } from './reducer.ts';
 import { claimOverlay, isIntakeChat, isParked, isVerified, isVoided, latestByRole, type WaitingOn } from './verify.ts';
@@ -45,6 +45,9 @@ export interface BoardCard {
   // the limit, and the limit in minutes. The browser draws `elapsed / limit min` from them.
   timebox_ends_at?: string;
   timebox_min?: number;
+  // 7-2: the card's open run_check steps (issued, claimed or reported; not voided), in issue order.
+  // Display only: their check droids stand beside the card. Absent when none.
+  checks_running?: Check[];
 }
 
 // files (6-3): at a Gate 1 or Gate 2 card, the ids of the current artifacts its evidence names.
@@ -307,6 +310,15 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
     claimsOf.set(card, [...(claimsOf.get(card) ?? []), claim]);
   }
 
+  // Running checks (7-2): open run_check steps, on their slice's card or their stage's card.
+  const checksOf = new Map<string, Check[]>();
+  for (const st of openSteps(s)) {
+    if (st.kind !== 'run_check' || !st.check || isVoided(s, st.id)) continue;
+    const card = st.slice ? sliceCard(st.slice) : st.stage === 'BUILD' ? null : stageCard(st.stage);
+    if (card) checksOf.set(card, [...(checksOf.get(card) ?? []), st.check]);
+  }
+  const running = (id: string): { checks_running?: Check[] } => (checksOf.has(id) ? { checks_running: checksOf.get(id)! } : {});
+
   // Decisions and their seals.
   const sealsOf = new Map<string, string[]>();
   const optionalSeals: [string, string][] = [];
@@ -333,7 +345,7 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
     const st = status(stage);
     if (st === 'pending' && !claimsOf.has(id) && !sealsOf.has(id)) continue;
     const column: Column = st === 'done' ? 'done' : st === 'pending' ? 'backlog' : askedStages.has(stage === 'DESIGN' ? 'SPEC' : stage) ? 'needs_you' : 'in_progress';
-    cards.push({ id, kind: 'stage', label: stage.replace('_', ' '), column, state: s.phase === 'ABANDONED' && stage === current ? 'abandoned' : st, claims: claimsOf.get(id) ?? [], seals: sealsOf.get(id) ?? [], superseded: false });
+    cards.push({ id, kind: 'stage', label: stage.replace('_', ' '), column, state: s.phase === 'ABANDONED' && stage === current ? 'abandoned' : st, claims: claimsOf.get(id) ?? [], seals: sealsOf.get(id) ?? [], superseded: false, ...running(id) });
   }
   const cutOpen = Boolean(openCutAsk(s));
   const timeboxEnds: string[] = [];
@@ -348,6 +360,7 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
       ...(cutOpen && sl.state === 'BACKLOG' ? { at_risk: true as const } : {}),
       ...(sl.tags ? { tags: [...sl.tags] } : {}), ...(sl.roster ? { roster: [...sl.roster] } : {}),
       ...(tb?.ends_at ? { timebox_ends_at: tb.ends_at, timebox_min: tb.limit_min } : {}),
+      ...running(id),
     });
   }
   for (const [c, d] of optionalSeals) cards.find((x) => x.id === c)?.seals.push(d);

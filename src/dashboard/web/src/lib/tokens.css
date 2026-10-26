@@ -63,6 +63,11 @@
   --role-reviewer-ux: #ff8fb1;
   --role-reviewer-a11y: #dfe8f7;
   --role-reviewer-ui: #3fcfa6;
+  --role-recon: #b8c25e;
+  --role-framer: #b8c25e;
+  --role-scaffolder: #d68ae6;
+  --role-spec-writer: #8ea2ff;
+  --role-slicer: #f2c7a0;
   /* Shared sprite palette */
   --sprite-void: #0a0e1a;
   --sprite-navy: #1b2440;

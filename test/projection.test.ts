@@ -394,3 +394,55 @@ test('claims (6-3): a scaffolder waiting on its checks stays CLAIMED with no ove
   assert.deepEqual([claim.state, claim.waiting_on, claim.waiting_for, claim.overdue_at], ['claimed', 'checks', 'install, health, test', null]);
   assert.equal(l.deadlines.overdue_at, null, 'a claim waiting on checks never goes overdue');
 });
+
+test('checks_running (7-2): a card\'s open run_check steps, in issue order; gone once verified; reissued, cancelled and voided steps excluded; slice and WRAP placement; absent without one', () => {
+  const all = load('happy-path');
+  const sc = all.find((e) => e.kind === 'step_issued' && (e.data as { role?: string }).role === 'scaffolder')!;
+  const base = upTo(all, (e) => e.kind === 'step_verified' && (e.data as { step_id: string }).step_id === sc.id);
+  const issue = (check: string, stage: string, slice?: string): AnyEvent => ev('step_issued', { kind: 'run_check', stage, attempt: 1, check, ...(slice ? { slice } : {}) });
+  const claim = (id: string): AnyEvent => ev('step_claimed', { step_id: id }, { session: SESSION });
+  const verify = (id: string): AnyEvent => ev('step_verified', { step_id: id, evidence: [] });
+  const checks = (l: Lane, id: string) => card(l, id).checks_running;
+
+  // No run_check yet: the field is absent, so old frames keep their shape.
+  assert.ok(lane(base).cards.every((c) => !('checks_running' in c)));
+
+  // SCAFFOLD: install verified, health issued.
+  const install = issue('contract.install', 'SCAFFOLD');
+  const health = issue('contract.health', 'SCAFFOLD');
+  const scaffold = [...base, install, claim(install.id), verify(install.id), health];
+  const l = lane(scaffold);
+  assert.equal(card(l, 'stage:SCAFFOLD').column, 'in_progress');
+  assert.deepEqual(checks(l, 'stage:SCAFFOLD'), ['contract.health']);
+  // Claimed is still open; verified ends it.
+  assert.deepEqual(checks(lane([...scaffold, claim(health.id)]), 'stage:SCAFFOLD'), ['contract.health']);
+  assert.equal(checks(lane([...scaffold, claim(health.id), verify(health.id)]), 'stage:SCAFFOLD'), undefined);
+  // Two open checks, in issue order.
+  const test1 = issue('contract.test', 'SCAFFOLD');
+  assert.deepEqual(checks(lane([...scaffold, test1]), 'stage:SCAFFOLD'), ['contract.health', 'contract.test']);
+
+  // A reissue: the old step is out, the new one in (once); a cancel ends it.
+  const re = ev('step_reissued', { old: health.id, new: '01JQZZZZZZZZZZZZZZZZZZZNEW' });
+  const reissued = [...scaffold, re];
+  assert.equal(fold(reissued).rejected.length, 0);
+  assert.deepEqual(checks(lane(reissued), 'stage:SCAFFOLD'), ['contract.health']);
+  assert.equal(checks(lane([...reissued, ev('step_cancelled', { step_id: '01JQZZZZZZZZZZZZZZZZZZZNEW' })]), 'stage:SCAFFOLD'), undefined);
+  // A voided open step is out.
+  const st = fold(scaffold);
+  const voided = projectRun({ state: { ...st, voided: [...st.voided, health.id] }, commands: scaffold, facts: [], skipped: [] }, { repo_hash: 'abc123def456', run_id: RUN });
+  assert.equal(checks(voided, 'stage:SCAFFOLD'), undefined);
+
+  // A slice in review with a BUILD check open: on its slice card. A BUILD check without a slice: on no card.
+  const review = upTo(all, (e) => e.kind === 'slice_closed');
+  const sliceTest = issue('contract.test', 'BUILD', 'S1');
+  const ls = lane([...review, sliceTest, issue('contract.health', 'BUILD')]);
+  assert.equal(card(ls, 'slice:S1').column, 'in_review');
+  assert.deepEqual(checks(ls, 'slice:S1'), ['contract.test']);
+  assert.ok(ls.cards.filter((c) => c.id !== 'slice:S1').every((c) => c.checks_running === undefined));
+
+  // WRAP: its re-checks on the WRAP card.
+  const wrap = all.slice(0, all.findIndex((e) => e.kind === 'stage_completed' && (e.data as { stage: string }).stage === 'BUILD') + 1);
+  const lw = lane([...wrap, issue('contract.health', 'WRAP')]);
+  assert.equal(card(lw, 'stage:WRAP').column, 'in_progress');
+  assert.deepEqual(checks(lw, 'stage:WRAP'), ['contract.health']);
+});
