@@ -66,6 +66,9 @@ export const outFile = (repoHash: string, runId: string, stepId: string): string
 // The run's dev server (AD-20): pid file and log.
 export const devserverPid = (repoHash: string, runId: string): string => join(runDir(repoHash, runId), 'devserver.pid');
 export const devserverLog = (repoHash: string, runId: string): string => join(runDir(repoHash, runId), 'devserver.log');
+// The run's own tool cache (6-4, AD-8): every contract command gets it as FACTORY_CACHE_DIR. The
+// recording copies only facts and artifacts, never this.
+export const runCacheDir = (repoHash: string, runId: string): string => join(runDir(repoHash, runId), 'cache');
 
 // A running-app reviewer's Playwright output dir: .mcp.json's `--output-dir
 // ${HOME}/.factory/playwright/<role>`, so it follows the home dir, never FACTORY_HOME. Screenshots

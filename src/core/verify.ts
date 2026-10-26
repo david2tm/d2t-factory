@@ -1,7 +1,7 @@
 // AD-7: the only home of attribution (facts → step) and of claim → evidence. Pure: no I/O; the CLI
 // hands in the facts, the commands and realpaths it read.
 import { CLAIM_OVERDUE_MS, MAX_RETRIGGER_ROUNDS } from './config.ts';
-import type { AnyEvent, Check, Envelope, Stage } from './events.ts';
+import type { AnyEvent, Check, Envelope, ScaffoldRepair, Stage } from './events.ts';
 import { isTerminal, openSteps, type RunState, type Slice, type SliceState, type Step } from './reducer.ts';
 import { isAppReviewer, isDiffReviewer, REVIEWERS, sliceRoster } from './roster.ts';
 
@@ -103,6 +103,37 @@ export const isIntakeConfirm = (st: Step): boolean => intakeAsk(st) && st.card!.
 
 // An open escalation ask whose subject is this step.
 export const askOpenFor = (s: RunState, stepId: string): boolean => Object.values(s.asks).some((a) => a.open && a.step_id === stepId);
+
+// --- the SCAFFOLD repair round (6-4, AD-8, AD-24) ----------------------------------------------
+
+// A repair round: the step_reissued that resumed (or respawned) the scaffolder with a repair brief.
+export interface RepairRound { old: string; new: string; repair: ScaffoldRepair }
+
+const repairRounds = (commands: readonly AnyEvent[]): RepairRound[] =>
+  commands.filter((e): e is Envelope<'step_reissued'> => e.kind === 'step_reissued' && Boolean((e as Envelope<'step_reissued'>).data.repair))
+    .map((e) => ({ old: e.data.old, new: e.data.new, repair: e.data.repair! }));
+
+// Rounds used: the repair reissues whose new step is not voided.
+export const scaffoldRepairs = (s: RunState, commands: readonly AnyEvent[]): number => repairRounds(commands).filter((r) => !isVoided(s, r.new)).length;
+
+// The active repair: the latest repair reissue with no escalation_ruled or stage_rerun_requested
+// after it (a human ruling ends it; a rerun answers the card like one). While it is active, the
+// scaffolder's briefs carry the repair section and its failure card names both rounds.
+export function activeScaffoldRepair(commands: readonly AnyEvent[]): RepairRound | undefined {
+  const i = commands.findLastIndex((e) => e.kind === 'step_reissued' && Boolean((e as Envelope<'step_reissued'>).data.repair));
+  if (i < 0 || commands.slice(i + 1).some((e) => e.kind === 'escalation_ruled' || e.kind === 'stage_rerun_requested')) return undefined;
+  const d = (commands[i] as Envelope<'step_reissued'>).data;
+  return { old: d.old, new: d.new, repair: d.repair! };
+}
+
+// Has the human ruled an ask about a scaffolder? Then no repair round follows (6-4).
+export function scaffoldRuled(s: RunState, commands: readonly AnyEvent[]): boolean {
+  return commands.some((e) => {
+    if (e.kind !== 'escalation_ruled') return false;
+    const ask = Object.values(s.asks).find((a) => a.escalation === (e as Envelope<'escalation_ruled'>).data.escalation);
+    return Boolean(ask?.step_id && s.steps[ask.step_id]?.role === 'scaffolder');
+  });
+}
 
 // AD-12: parked = every open step waits on the human (an ask_human step, or the subject of an open
 // ask). `/factory rerun` is legal only here (3-4).

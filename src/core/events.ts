@@ -93,6 +93,9 @@ export interface DecisionBase { prompt_fact_id: string; human_prompt?: unknown; 
 // `start` and `resume` consume a non-decision prompt and embed it the same way (AD-26).
 export interface PromptEmbed { prompt_fact_id?: string; human_prompt?: unknown; prompt_text?: unknown }
 
+// 6-4: a SCAFFOLD repair round: round 1's failure lines (redacted) and the failed check step ids.
+export interface ScaffoldRepair { failures: string[]; checks: string[] }
+
 export interface DataByKind {
   run_started: PromptEmbed & { task: string; repo_hash: string; base_sha: string; branch: string; greenfield?: boolean };
   // rebind_fact_id: the hook's session_started{source:'clear'} fact that a /clear rebind adopts (AD-25).
@@ -107,8 +110,10 @@ export interface DataByKind {
   // output: the redacted projection of the parsed out.md or check result (AD-23).
   step_reported: { step_id: string; note?: string; sha?: string; output?: Record<string, unknown> };
   step_verified: { step_id: string; evidence: string[]; verdict?: string; artifact?: ArtifactEmbed };
-  // 3-4: kind 'spawn' turns a reissued resume into a spawn (its agent may be gone).
-  step_reissued: { old: string; new: string; output_path?: string; brief_path?: string; kind?: 'spawn' };
+  // 3-4: kind 'spawn' turns a reissued resume into a spawn (its agent may be gone). 6-4, additive:
+  // kind 'resume' with agent_id continues the reported scaffolder's agent; `repair` marks a SCAFFOLD
+  // repair round (AD-8).
+  step_reissued: { old: string; new: string; output_path?: string; brief_path?: string; kind?: 'spawn' | 'resume'; agent_id?: string; repair?: ScaffoldRepair };
   check_ran: {
     check: Check; exit_code: number; duration_ms: number; basis_seq: number;
     command?: string; sha?: string; dirty?: boolean; digest?: string;

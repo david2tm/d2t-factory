@@ -16,6 +16,9 @@ export const CLAIM_GRACE_MS = 5_000;
 export const SPEC_MAX_LINES = 40;
 // 6-1: consecutive Stop blocks for the holder before the next stop is let through (stop_forced).
 export const STOP_BLOCK_MAX = 3;
+// 6-4: factory repair rounds a brownfield SCAFFOLD gets on failed contract checks (install, health,
+// test) before the scaffold_failure card (AD-8, AD-24): the scaffolder is resumed with a repair brief.
+export const SCAFFOLD_REPAIR_ROUNDS = 1;
 // 6-3: the most bytes of an artifact's redacted body that step_verified embeds (AD-23), cut on a
 // UTF-8 boundary; a longer body is marked truncated.
 export const ARTIFACT_EMBED_MAX = 64 * 1024;

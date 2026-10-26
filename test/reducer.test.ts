@@ -294,6 +294,26 @@ test('step_reissued with kind spawn (3-4) turns a resume into a spawn with no ag
   assert.ok(r2);
 });
 
+test('step_reissued with kind resume (6-4) continues the scaffolder\'s agent; its repair data is additive; resume without agent_id is rejected', () => {
+  let st = fold([started3(), ev3('intake_confirmed', { prompt_fact_id: 'f' }, { actor: 'human' }), ev3('stage_completed', { stage: 'RECON' })]);
+  const b = {
+    get s() { return st; },
+    step: (kind: string, data: object): string => { const e = ev3(kind, data); const r = apply(st, e); assert.ok(r.ok, r.reason); st = r.state; return e.id; },
+  };
+  assert.equal(b.s.phase, 'SCAFFOLD');
+  const sc = b.step('step_issued', { kind: 'spawn', stage: 'SCAFFOLD', attempt: 1, role: 'scaffolder', agent: 'd2t-factory:scaffolder' });
+  b.step('step_claimed', { step_id: sc, agent_id: 'ag-s' });
+  b.step('step_reported', { step_id: sc, output: { status: 'DONE' } });
+  assert.match(apply(b.s, ev3('step_reissued', { old: sc, new: 'R0', kind: 'resume' })).reason!, /resume requires agent_id/);
+  b.step('step_reissued', { old: sc, new: 'R1', kind: 'resume', agent_id: 'ag-s', repair: { failures: ['contract.install failed (exit 1)'], checks: ['C1'] } });
+  const r = b.s.steps.R1;
+  assert.deepEqual([b.s.steps[sc].state, r.kind, r.agent_id, r.attempt, r.state, r.role, r.output], ['reissued', 'resume', 'ag-s', 2, 'issued', 'scaffolder', undefined]);
+  // A reissue of the resume (its agent gone) is a spawn again.
+  b.step('step_claimed', { step_id: 'R1' });
+  b.step('step_reissued', { old: 'R1', new: 'R2', kind: 'spawn' });
+  assert.deepEqual([b.s.steps.R2.kind, 'agent_id' in b.s.steps.R2], ['spawn', false]);
+});
+
 test('escalation_ruled moves the slice to slice_to, CUT included (3-4); stage_rerun_requested closes every open ask and clears the slices', () => {
   const b = build34();
   b.step('ask_raised', { card: { type: 'escalation', title: 'Over time box (S1)', reason_label: 'Over time box', commands: [] }, slice: 'S1', escalation: 'E1' });

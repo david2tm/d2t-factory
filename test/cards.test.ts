@@ -217,6 +217,12 @@ test('escalation and SCAFFOLD failure cards (6-2): each command with its then; t
     '/factory rule E2 retry <note…>': 'the scaffolder runs again with your note, then the checks', '/factory rule E2 accept': 'SCAFFOLD is accepted as is and SPEC starts', '/factory abandon': ABANDON_THEN,
   });
   assert.equal(sf.reason, 'contract.test failed (exit 1)', 'the reason is 6-4\'s');
+  // 6-4: after a repair round the reason names both rounds; the options are unchanged.
+  const two = cards.scaffoldFailureCard({ escalation: 'E2', failures: ['contract.install failed (exit 1): b'], accept: false, rounds: { r1: ['contract.install failed (exit 1): a', 'contract.test failed (exit 2)'], repair: 'install "npm ci" → "PUPPETEER_SKIP_DOWNLOAD=1 npm ci"' } });
+  assert.equal(two.reason, 'round 1: contract.install failed (exit 1): a; contract.test failed (exit 2) · repair: install "npm ci" → "PUPPETEER_SKIP_DOWNLOAD=1 npm ci" · round 2: contract.install failed (exit 1): b');
+  assert.deepEqual(two.commands, ['/factory rule E2 retry <note…>', '/factory abandon']);
+  const esc = cards.scaffoldFailureCard({ escalation: 'E1', failures: ['Scaffold failed: needs a database'], accept: false, rounds: { r1: ['contract.health failed (exit 1)'] } });
+  assert.equal(esc.reason, 'round 1: contract.health failed (exit 1) · round 2: Scaffold failed: needs a database');
   for (const c of [e, sf]) assert.equal(c.reply, ESC_REPLY);
   // SIGNAL LOST is board-only: options, no reply.
   const sl = cards.signalLostCard('r-1');

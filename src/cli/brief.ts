@@ -4,18 +4,33 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { OVERRIDE_ROLES } from '../core/artifacts.ts';
 import { CUT_LEAD_MS, SLICE_TIMEBOX_DEFAULT_MS, SPEC_MAX_LINES } from '../core/config.ts';
-import type { AnyEvent, Envelope, Finding, Stage } from '../core/events.ts';
+import type { AnyEvent, Envelope, Finding, ScaffoldRepair, Stage } from '../core/events.ts';
 import { ESCALATION_LABELS, FINDING_CATEGORIES } from '../core/output.ts';
 import { redactString } from '../core/redact.ts';
 import type { RunState } from '../core/reducer.ts';
 import { appReviewerTools, isAppReviewer, isDiffReviewer, REVIEWERS, SLICE_TAGS, sliceRoster } from '../core/roster.ts';
-import { designMode, isVoided, latestByRole, latestDesign, latestSpec, latestStep, roundFailure, roundOf, sliceDeps, uiReference } from '../core/verify.ts';
+import { activeScaffoldRepair, designMode, isVoided, latestByRole, latestDesign, latestSpec, latestStep, roundFailure, roundOf, sliceDeps, uiReference } from '../core/verify.ts';
 import { readRedactValues } from '../store/load-run.ts';
-import { briefFile, playwrightDir } from '../store/paths.ts';
+import { briefFile, playwrightDir, runCacheDir } from '../store/paths.ts';
 import { contractOf } from './devserver.ts';
 
 export interface BriefStep { id: string; role: string; stage: Stage; attempt: number; output_path: string; slice?: string }
-export interface BriefExtra { notes?: readonly string[]; error?: string }
+// 6-4: `repair`, a SCAFFOLD repair round's failures and failed check steps, with the step whose
+// contract round 1 reported (`previous`).
+export interface BriefRepair extends ScaffoldRepair { previous: string }
+export interface BriefExtra { notes?: readonly string[]; error?: string; repair?: BriefRepair }
+
+// The repair a scaffolder brief carries (6-4): the one being issued, else the active repair, so a
+// reissue of the repair step (a parse failure, an orphan, a resume whose agent is gone) keeps it.
+function repairOf(role: string, commands: readonly AnyEvent[], extra: BriefExtra): BriefRepair | undefined {
+  if (role !== 'scaffolder') return undefined;
+  if (extra.repair) return extra.repair;
+  const active = activeScaffoldRepair(commands);
+  return active ? { ...active.repair, previous: active.old } : undefined;
+}
+
+// The repair envelope (review-policy.md, SCAFFOLD repair).
+const REPAIR_ENVELOPE = "Repair envelope: change only the contract's commands (env vars, flags, the package-manager command form, timeouts); point tool caches at `$FACTORY_CACHE_DIR`; never delete or edit anything outside the worktree; change no tracked file; add no dependency.";
 
 // `Scaffold failed` is the scaffolder's declared ask alone (3-4); every other role escalates with a
 // closed-list condition.
@@ -193,7 +208,7 @@ const slicerNotes = (commands: readonly AnyEvent[]): string[] => reworkNotes(com
 // The orientation agents (RECON, FRAME) run in the main checkout, before the worktree and the port.
 const orienting = (role: string): boolean => role === 'recon' || role === 'framer';
 
-function inputs(state: RunState, step: BriefStep, root: string): [string, string][] {
+function inputs(state: RunState, step: BriefStep, root: string, repair?: BriefRepair): [string, string][] {
   const out: [string, string][] = [];
   const context = state.recon?.path ?? latestByRole(state, state.greenfield ? 'framer' : 'recon')?.output_path;
   const contract = latestStep(state, (st) => st.role === 'scaffolder' && st.output?.status === 'DONE');
@@ -221,6 +236,14 @@ function inputs(state: RunState, step: BriefStep, root: string): [string, string
     const prior = latestStep(state, (st) => st.role === 'designer' && isVoided(state, st.id));
     if (prior?.output_path) out.push(['the previous design, sent back (a gate-1 rework or the other option chosen)', prior.output_path]);
   }
+  if (repair) {
+    for (const id of repair.checks) {
+      const ck = state.steps[id];
+      if (ck?.output_path) out.push([`the failed ${ck.check ?? 'check'} log`, ck.output_path]);
+    }
+    const prev = state.steps[repair.previous]?.output_path;
+    if (prev) out.push(['your previous run contract, whose checks failed', prev]);
+  }
   return out;
 }
 
@@ -229,6 +252,10 @@ export function briefText(state: RunState, commands: readonly AnyEvent[], step: 
   const facts: string[] = [`task: ${state.task}`, `run: ${state.run_id} (branch ${state.branch}, base ${state.base_sha})`];
   if (state.port !== undefined && !orienting(step.role)) facts.push(`claimed port: ${state.port}`);
   if (state.worktree && !orienting(step.role)) facts.push(`worktree: ${state.worktree}`);
+  if (step.role === 'scaffolder' && state.repo_hash && state.run_id) {
+    facts.push(`FACTORY_CACHE_DIR: ${runCacheDir(state.repo_hash, state.run_id)} (the run's own tool cache: every contract command the factory runs gets it in its environment)`);
+  }
+  const repair = repairOf(step.role, commands, extra);
   const sl = step.slice ? state.slices[step.slice] : undefined;
   if (sl) {
     facts.push(`slice: ${sl.id} ${sl.title ?? ''}`.trim(), `acceptance criteria of ${sl.id}: ${(sl.acs ?? []).join(', ') || 'none'}`);
@@ -287,11 +314,18 @@ export function briefText(state: RunState, commands: readonly AnyEvent[], step: 
     `# Brief — d2t-factory:${step.role}`,
     `step ${step.id} · stage ${step.stage} · attempt ${step.attempt}`,
     '', '## Facts', ...facts.map((f) => `- ${f}`),
-    '', '## Read only these inputs', ...inputs(state, step, root).map(([label, p]) => `- ${label}: ${p}`),
+    '', '## Read only these inputs', ...inputs(state, step, root, repair).map(([label, p]) => `- ${label}: ${p}`),
     '', '## Write exactly one file', `${step.output_path}`, `Write it with the Write tool. Write nothing else under ~/.factory${isAppReviewer(step.role) ? ' except your screenshots, at the paths the output format below gives' : ''}, and never run \`factory\`.`,
     '', '## Output format', isAppReviewer(step.role) ? reviewerFormat(step.role, step.id) : FORMAT[step.role === 'scaffolder' && state.greenfield ? 'scaffolder:greenfield' : step.role] ?? 'Line 1 `STATUS: DONE|ESCALATE`.',
   ];
   if (prev) parts.push('', `## Your last round on ${sl!.id} did not pass`, quote(redactString(prev.note, values)));
+  if (repair) {
+    parts.push('', '## Repair round',
+      'The factory ran your run contract and these checks failed (their logs and your previous contract are among the inputs):',
+      ...repair.failures.map((f) => quote(redactString(f, values))),
+      REPAIR_ENVELOPE,
+      'If the cause is on the project\'s side (secrets, services, a broken repo), write line 1 `STATUS: ESCALATE` and line 2 `Scaffold failed: <why>`. Otherwise write the whole revised contract.');
+  }
   if (notes.length) parts.push('', '## Notes from the human (newest last)', ...notes.map(quote));
   if (extra.error) parts.push('', '## Your previous output was rejected', quote(redactString(extra.error, values)), 'Fix exactly this and write the whole file again.');
   return parts.join('\n') + '\n';

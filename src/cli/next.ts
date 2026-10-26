@@ -8,15 +8,15 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { checkOutput, isDependencyFile } from '../core/artifacts.ts';
 import { cutCandidates, deadlinesAhead, nextDeadlineMs, sliceTimebox } from '../core/budget.ts';
 import { cutCard, newDependencyCard, nonConvergenceCard, overTimeboxCard, roundWhy, scaffoldFailureCard } from '../core/cards.ts';
-import { MAX_RETRIGGER_ROUNDS, WAIT_POLL_MS } from '../core/config.ts';
+import { MAX_RETRIGGER_ROUNDS, SCAFFOLD_REPAIR_ROUNDS, WAIT_POLL_MS } from '../core/config.ts';
 import { FactoryError } from '../core/errors.ts';
 import type { AnyEvent, Envelope } from '../core/events.ts';
 import { redact, redactString } from '../core/redact.ts';
 import { isTerminal, openSteps, type RunState, type Step } from '../core/reducer.ts';
 import { due, mergeCardCurrent, type ScheduleCtx, type WrapProbe } from '../core/schedule.ts';
 import {
-  askOpenFor, checkById, claimOverlay, classifyOrphan, closeEvidence, isIntakeChat, isVerified, isVoided, latestByRole, latestCheckStep, liveSlices, nextBacklog, openMergeCard,
-  roundFailure, roundOf, sliceDeps, wrapBaseline, wrapCheck,
+  activeScaffoldRepair, askOpenFor, checkById, claimOverlay, classifyOrphan, closeEvidence, isIntakeChat, isVerified, isVoided, latestByRole, latestCheckStep, liveSlices, nextBacklog, openMergeCard,
+  roundFailure, roundOf, scaffoldRepairs, scaffoldRuled, sliceDeps, wrapBaseline, wrapCheck,
 } from '../core/verify.ts';
 import { ulid } from '../store/ids.ts';
 import { loadRun, readRedactValues, type LoadedRun } from '../store/load-run.ts';
@@ -33,7 +33,7 @@ import {
 import { writeRecording } from './record.ts';
 import { requireHolder, requireRun, requireSession } from './resolve.ts';
 import {
-  commitBuilder, evidenceFor, isAgent, raise, readOutput, redactCard, reissueOrEscalate, reportEvents, scaffoldCopy, verifiedEvent, type Ctx,
+  commitBuilder, evidenceFor, isAgent, raise, readOutput, redactCard, reissueEvent, reissueOrEscalate, reportEvents, scaffoldCopy, verifiedEvent, type Ctx,
 } from './steps.ts';
 import { inWorktree, prepareWorktree } from './worktree.ts';
 
@@ -53,26 +53,34 @@ function readCache(hash: string, baseSha: string): string | null {
   }
 }
 
-// The builder agent a new round of a slice may resume: the agent of its newest verified builder
-// step, if that agent was first spawned (claimed) after the run's latest session_bound. After a
-// takeover or /clear the old agent is gone, so the round is a spawn. 3-4: one per live slice.
-function resumeAgent(run: LoadedRun, slice: string): string | undefined {
+// The agent of `prev` that a new step may resume: its agent id, if that agent was first spawned
+// (claimed, by the earliest of `steps` it ran) after the run's latest session_bound. After a takeover
+// or /clear the old agent is gone, so the new step is a spawn. Shared by the builder rounds and the
+// SCAFFOLD repair round (6-4).
+function resumableAgent(run: LoadedRun, prev: Step | undefined, steps: readonly Step[]): string | undefined {
   const s = run.state;
-  const sl = s.slices[slice];
-  if (!sl || !['BUILDING', 'FINDINGS_QUEUED', 'IN_REVIEW'].includes(sl.state)) return undefined;
-  const builders = s.step_order.map((id) => s.steps[id]).filter((st) => st.role === 'builder' && st.slice === sl.id);
   const agentOf = (st: Step): string | undefined => {
     if (st.kind === 'resume') return st.agent_id;
     const ev = evidenceFor(run, st, readOutput(s, st));
     return ev.ok ? ev.agent_id : undefined;
   };
-  const prev = roundOf(s, sl.id).builder;
   const id = prev && agentOf(prev);
-  const origin = id ? builders.find((st) => agentOf(st) === id) : undefined;
+  const origin = id ? steps.find((st) => agentOf(st) === id) : undefined;
   if (!origin) return undefined;
   const claimed = run.commands.findIndex((e) => e.kind === 'step_claimed' && (e as Envelope<'step_claimed'>).data.step_id === origin.id);
   const bound = run.commands.findLastIndex((e) => e.kind === 'session_bound');
   return claimed > bound ? id : undefined;
+}
+
+const stepsOf = (s: RunState, pred: (st: Step) => boolean): Step[] => s.step_order.map((id) => s.steps[id]).filter(pred);
+
+// The builder agent a new round of a slice may resume: the agent of its newest verified builder
+// step (resumableAgent). 3-4: one per live slice.
+function resumeAgent(run: LoadedRun, slice: string): string | undefined {
+  const s = run.state;
+  const sl = s.slices[slice];
+  if (!sl || !['BUILDING', 'FINDINGS_QUEUED', 'IN_REVIEW'].includes(sl.state)) return undefined;
+  return resumableAgent(run, roundOf(s, sl.id).builder, stepsOf(s, (st) => st.role === 'builder' && st.slice === sl.id));
 }
 
 function resumeAgents(run: LoadedRun): Record<string, string> {
@@ -209,6 +217,29 @@ function stepTail(st: Step): string {
   try { return logTail(readFileSync(st.output_path, 'utf8')); } catch { return ''; }
 }
 
+// The repair line of a two-round card (6-4): each contract key round 2 changed, as
+// `<key> "<old>" → "<new>"` joined with `; `, or `no contract change`. From the two reported
+// (redacted) contracts, never from the agent's own account.
+const shown = (v: unknown): string => (v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v));
+export function contractDiff(before: Record<string, unknown> | undefined, after: Record<string, unknown> | undefined): string {
+  const a = before ?? {};
+  const b = after ?? {};
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])];
+  const changed = keys.filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k])).map((k) => `${k} "${shown(a[k])}" → "${shown(b[k])}"`);
+  return changed.length ? changed.join('; ') : 'no contract change';
+}
+const frontOf = (st: Step | undefined): Record<string, unknown> | undefined => st?.output?.front as Record<string, unknown> | undefined;
+
+// The SCAFFOLD repair round (6-4, AD-8, AD-24): a reissue of the reported scaffolder (a resume of
+// its agent when that agent can be resumed) whose brief carries round 1's failures, the failed
+// checks' logs and the repair envelope.
+function repairEvent(c: Ctx, run: LoadedRun, sc: Step, failures: readonly string[], checks: readonly Step[]): AnyEvent {
+  const values = readRedactValues(c.hash, c.runId);
+  const repair = { failures: failures.map((f) => redactString(f, values)), checks: checks.map((st) => st.id) };
+  const agent_id = resumableAgent(run, sc, stepsOf(run.state, (st) => st.role === 'scaffolder'));
+  return reissueEvent(c, run, sc, {}, { repair, ...(agent_id ? { agent_id } : {}) });
+}
+
 // SCAFFOLD done: the install verified, and (once it passed) health and test verified → the inline
 // git checks and one run per repo (AD-15: another live run holding exclusive/ blocks any run; a run
 // whose contract lists a shared service claims it, and is blocked by a live run already past
@@ -217,7 +248,9 @@ function stepTail(st: Step): string {
 // A blocked run can only retry (once the other run ends) or abandon: no accept. Greenfield (5-2):
 // with nothing else failing, the CLI commits the scaffolded project as `factory: scaffold
 // (<step_id>)`; a scaffolder that created no project files fails. A greenfield failure offers retry
-// or abandon only.
+// or abandon only. 6-4: a brownfield run whose only failures are contract checks gets
+// SCAFFOLD_REPAIR_ROUNDS repair rounds first (none after a human ruling); while a repair is active,
+// the card names both rounds and the contract diff.
 function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
   const { state } = run;
   const install = latestCheckStep(state, 'contract.install', sc.issued_seq);
@@ -235,22 +268,29 @@ function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
   const services = contractOf(state)?.services;
   const shared = Array.isArray(services) && services.some((x) => (x as { shared?: unknown }).shared === true);
   const conflict = scaffoldConflict(c.hash, c.runId, shared);
+  const failed = steps.filter((_, i) => !(checks[i] && checks[i]!.exit_code === 0)) as Step[];
+  const checkLines = failed.map((st) => {
+    const x = checkById(state, st.output?.check_id);
+    const tail = stepTail(st);
+    return `${st.check} failed${x ? ` (exit ${x.exit_code})` : ''}${tail ? `: ${tail}` : ''}`;
+  });
   const failures = [
-    ...checks.map((x, i) => {
-      if (x && x.exit_code === 0) return null;
-      const tail = stepTail(steps[i]!);
-      return `${steps[i]!.check} failed${x ? ` (exit ${x.exit_code})` : ''}${tail ? `: ${tail}` : ''}`;
-    }),
+    ...checkLines,
     (clean.data as { exit_code: number }).exit_code === 0 ? null : 'tracked files changed in the worktree',
     base.pass ? null : 'the main checkout differs from its baseline',
     conflict ? refusedExclusive(conflict) : null,
     empty ? 'the scaffolder created no project files' : null,
   ].filter((x): x is string => Boolean(x));
   const events = [clean, base.event];
-  if (failures.length) {
+  const onlyChecks = checkLines.length > 0 && failures.length === checkLines.length;
+  if (onlyChecks && !state.greenfield && !conflict && scaffoldRepairs(state, run.commands) < SCAFFOLD_REPAIR_ROUNDS && !scaffoldRuled(state, run.commands)) {
+    events.push(repairEvent(c, run, sc, checkLines, failed));
+  } else if (failures.length) {
     // Greenfield offers no accept: an accepted scaffold would have no scaffold commit. Nor does a
     // failed install: health and test never ran.
-    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict && !state.greenfield && installed })));
+    const active = activeScaffoldRepair(run.commands);
+    const rounds = active ? { r1: active.repair.failures, repair: contractDiff(frontOf(state.steps[active.old]), frontOf(sc)) } : undefined;
+    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict && !state.greenfield && installed, ...(rounds ? { rounds } : {}) })));
   } else {
     // Idempotent: a round that is not appended leaves the commit, and the next finds a clean worktree.
     const scaffold = state.greenfield ? [`scaffold:${changed ? commitAll(wt, `factory: scaffold (${sc.id})`) : head(wt)}`] : [];
@@ -384,8 +424,9 @@ function stepEvents(c: Ctx, run: LoadedRun, st: Step, ctx: ScheduleCtx, cwd: str
     const verdict = classifyOrphan(st, { parsed: out.result.ok, evidence: ev });
     if (verdict === 'reissue') return [reissueOrEscalate(c, run, st, { error: out.result.ok ? 'the agent stopped before its output was attributed' : out.result.error }).event];
     if (verdict === 'verify') {
+      const repair = st.role === 'scaffolder' ? activeScaffoldRepair(run.commands)?.repair.failures : undefined;
       return reportEvents(c, state, st, out, {
-        evidence: ev, actor: 'cli', copyError: st.role === 'scaffolder' ? scaffoldCopy(c, state, out) : undefined, sha: commitBuilder(state, st, out),
+        evidence: ev, actor: 'cli', copyError: st.role === 'scaffolder' ? scaffoldCopy(c, state, out) : undefined, sha: commitBuilder(state, st, out), ...(repair ? { repair } : {}),
       });
     }
     return [];

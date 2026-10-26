@@ -16,7 +16,7 @@ import { rosterOf } from '../core/roster.ts';
 import { latestSlicePlan, latestSpec, uiReference } from '../core/verify.ts';
 import { loadRun, readRedactValues } from '../store/load-run.ts';
 import { withLock } from '../store/locks.ts';
-import { devserverLog, lockDir } from '../store/paths.ts';
+import { devserverLog, lockDir, runCacheDir } from '../store/paths.ts';
 import type { Args } from './args.ts';
 import { appendAll, gateOrThrow, makeEvent } from './commit.ts';
 import { contractOf, devserverDown, devserverRunning, devserverUp, serverAlive, serverSpec } from './devserver.ts';
@@ -31,8 +31,12 @@ const contractField = (state: RunState, k: string): string | undefined => {
   return typeof v === 'string' ? v : undefined;
 };
 
-function sh(command: string, cwd: string, port: number | undefined, timeout: number): { code: number; log: string } {
-  const r = spawnSync('sh', ['-c', command], { cwd, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, ...(port !== undefined ? { PORT: String(port) } : {}) } });
+// A contract command's environment: PORT, and (6-4) FACTORY_CACHE_DIR, the run's own tool cache,
+// created first.
+function sh(command: string, cwd: string, port: number | undefined, timeout: number, cacheDir: string): { code: number; log: string } {
+  mkdirSync(cacheDir, { recursive: true });
+  const env = { ...process.env, ...(port !== undefined ? { PORT: String(port) } : {}), FACTORY_CACHE_DIR: cacheDir };
+  const r = spawnSync('sh', ['-c', command], { cwd, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024, env });
   const code = r.status ?? 124; // killed by the timeout
   return { code, log: `$ ${command}\n${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `\n${r.error.message}` : ''}\n[exit ${code}]\n` };
 }
@@ -50,7 +54,7 @@ async function httpOk(url: string): Promise<boolean> {
 function contractCommand(state: RunState, k: 'test' | 'install'): Result {
   const command = contractField(state, k);
   if (!command || !state.worktree) return { exit_code: 1, log: `no run contract ${k} command`, output: { error: `no run contract ${k} command` } };
-  const r = sh(command, state.worktree, state.port, CHECK_TIMEOUT_MS);
+  const r = sh(command, state.worktree, state.port, CHECK_TIMEOUT_MS, runCacheDir(state.repo_hash!, state.run_id!));
   return { exit_code: r.code, command, log: r.log, output: {} };
 }
 const testCheck = (state: RunState): Result => contractCommand(state, 'test');
@@ -80,7 +84,7 @@ async function healthCheck(state: RunState, hash: string, runId: string, restart
   // On failure the log holds what the dev server wrote, then the cause last, so the card's tail keeps it.
   const fail = (error: string): Result => ({ exit_code: 1, command, log: `${log}${serverTail(hash, runId, up.started ? from : 0)}${error}\n`, output: { error } });
   for (;;) {
-    const ok = /^https?:\/\//.test(command) ? await httpOk(command) : sh(command, spec.worktree, spec.port, 10_000).code === 0;
+    const ok = /^https?:\/\//.test(command) ? await httpOk(command) : sh(command, spec.worktree, spec.port, 10_000, runCacheDir(hash, runId)).code === 0;
     // The port answered: it is our server only while the pid we started (or found) still lives.
     // devserverUp refused to spawn while anything else answered there.
     if (ok && (await serverAlive(up.pid))) return { exit_code: 0, command, log: log + 'health passed\n', output: { pid: up.pid } };

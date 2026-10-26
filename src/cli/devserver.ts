@@ -11,7 +11,7 @@ import type { RunState } from '../core/reducer.ts';
 import { latestStep } from '../core/verify.ts';
 import { loadRun } from '../store/load-run.ts';
 import { withLock } from '../store/locks.ts';
-import { devserverLog, devserverPid, lockDir } from '../store/paths.ts';
+import { devserverLog, devserverPid, lockDir, runCacheDir } from '../store/paths.ts';
 import type { Args } from './args.ts';
 import { sha256 } from './git.ts';
 import { requireHolder, requireRun, requireSession } from './resolve.ts';
@@ -67,7 +67,10 @@ export async function devserverUp(hash: string, runId: string, spec: ServerSpec)
   mkdirSync(dirname(log), { recursive: true });
   const fd = openSync(log, 'a');
   try {
-    const child = spawn('sh', ['-c', spec.start], { cwd: spec.worktree, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, PORT: String(spec.port) } });
+    // 6-4: like every contract command, `start` gets the run's own tool cache as FACTORY_CACHE_DIR.
+    const cache = runCacheDir(hash, runId);
+    mkdirSync(cache, { recursive: true });
+    const child = spawn('sh', ['-c', spec.start], { cwd: spec.worktree, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, PORT: String(spec.port), FACTORY_CACHE_DIR: cache } });
     if (!child.pid) throw new FactoryError('CHECK_FAILED', `could not start the dev server: ${spec.start}`);
     const pid = child.pid;
     child.once('exit', () => exitedHere.add(pid));

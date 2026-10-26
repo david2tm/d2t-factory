@@ -11,7 +11,7 @@ import { FactoryError } from '../core/errors.ts';
 import type { AnyEvent } from '../core/events.ts';
 import { openSteps, type Step } from '../core/reducer.ts';
 import { isAppReviewer } from '../core/roster.ts';
-import { isIntakeChat, isIntakeConfirm } from '../core/verify.ts';
+import { activeScaffoldRepair, isIntakeChat, isIntakeConfirm } from '../core/verify.ts';
 import { loadRun, type LoadedRun } from '../store/load-run.ts';
 import { withLock } from '../store/locks.ts';
 import { lockDir, playwrightDir, realish, stepDir } from '../store/paths.ts';
@@ -92,7 +92,9 @@ export async function done(args: Args): Promise<unknown> {
         events = [r.event];
         attempts = r.attempts;
       } else {
-        events = reportEvents(c, state, st, o, { evidence: evidenceFor({ ...run, state }, st, o), note, actor: 'conductor', copyError, sha: o === out ? sha : undefined });
+        // 6-4: while a SCAFFOLD repair is active, the scaffolder's ESCALATE card names both rounds.
+        const repair = st.role === 'scaffolder' ? activeScaffoldRepair(run.commands)?.repair.failures : undefined;
+        events = reportEvents(c, state, st, o, { evidence: evidenceFor({ ...run, state }, st, o), note, actor: 'conductor', copyError, sha: o === out ? sha : undefined, ...(repair ? { repair } : {}) });
       }
     } else if (st.kind === 'enter_worktree' && !inWorktree(cwd, state.worktree)) {
       // Not entered (this call's cwd is outside): nothing could ever verify it, so it is reissued.

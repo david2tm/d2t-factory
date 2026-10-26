@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { checkOutput, originOf, type AgentOutput, type OutputOpts } from '../core/artifacts.ts';
 import { escalationCard, scaffoldFailureCard, stepNonConvergenceCard } from '../core/cards.ts';
 import { ARTIFACT_EMBED_MAX, MAX_STEP_ATTEMPTS } from '../core/config.ts';
-import type { AnyEvent, ArtifactEmbed, Card, Envelope } from '../core/events.ts';
+import type { AnyEvent, ArtifactEmbed, Card, Envelope, ScaffoldRepair } from '../core/events.ts';
 import { redact, redactString } from '../core/redact.ts';
 import type { RunState, Step } from '../core/reducer.ts';
 import type { AgentEvidence } from '../core/verify.ts';
@@ -113,7 +113,9 @@ export function scaffoldCopy(c: Ctx, state: RunState, out: ReadOutput): string |
 
 // The events a parsed report implies: step_reported{output}, then an escalation ask, or
 // step_verified when the agent evidence is in. The scaffolder verifies only on its checks.
-export function reportEvents(c: Ctx, state: RunState, st: Step, out: ReadOutput, o: { evidence: AgentEvidence; note?: string; actor: string; copyError?: string; sha?: string }): AnyEvent[] {
+// 6-4: `repair`, round 1's failure lines while a SCAFFOLD repair is active: a scaffolder's ESCALATE (or
+// copy failure) then raises the card at once, naming both rounds.
+export function reportEvents(c: Ctx, state: RunState, st: Step, out: ReadOutput, o: { evidence: AgentEvidence; note?: string; actor: string; copyError?: string; sha?: string; repair?: readonly string[] }): AnyEvent[] {
   const r = out.result;
   if (!r.ok) throw new Error('reportEvents needs a parsed output');
   const failure = r.failure ?? o.copyError;
@@ -126,7 +128,7 @@ export function reportEvents(c: Ctx, state: RunState, st: Step, out: ReadOutput,
   if (st.slice !== undefined && (!sl || sl.state === 'CUT')) return events;
   if (st.role === 'scaffolder' && (r.status === 'ESCALATE' || failure)) {
     const why = r.escalation ? `${r.escalation.label}: ${r.escalation.line}` : failure!;
-    events.push(raise(c, state, st, (e) => scaffoldFailureCard({ escalation: e, failures: [why], accept: false })));
+    events.push(raise(c, state, st, (e) => scaffoldFailureCard({ escalation: e, failures: [why], accept: false, ...(o.repair ? { rounds: { r1: o.repair } } : {}) })));
   } else if (r.status === 'ESCALATE') {
     // A builder's or reviewer's escalation parks its slice (ESCALATED) until the ruling.
     events.push(raise(c, state, st, (e) => escalationCard({ escalation: e, label: r.escalation!.label, line: r.escalation!.line, role: st.role }), st.slice));
@@ -173,24 +175,37 @@ export function verifiedEvent(c: Ctx, st: Step, evidence: string[], status: unkn
 // step_reissued with a fresh step id, output path and (for agents) brief. The reducer copies the old
 // step (AD-24), except that a resume is reissued as a spawn (3-4): the agent it continued may be gone
 // (a SendMessage that could not reach a finished builder ends in a done with no output). The INTAKE
-// conversation keeps its output_path.
-export function reissueEvent(c: Ctx, run: Pick<LoadedRun, 'state' | 'commands'>, st: Step, extra: BriefExtra = {}, o: { output_path?: string } = {}): AnyEvent {
+// conversation keeps its output_path. 6-4: a SCAFFOLD repair round passes `repair` (into the event and,
+// with the round-1 contract's step, the brief) and, when the scaffolder's agent can be resumed,
+// `agent_id` (a resume of it).
+export function reissueEvent(
+  c: Ctx, run: Pick<LoadedRun, 'state' | 'commands'>, st: Step, extra: BriefExtra = {},
+  o: { output_path?: string; agent_id?: string; repair?: ScaffoldRepair } = {},
+): AnyEvent {
   const id = ulid();
   const output_path = o.output_path ?? outFile(c.hash, c.runId, id);
+  const brief = o.repair ? { ...extra, repair: { ...o.repair, previous: st.id } } : extra;
   const brief_path = isAgent(st) && st.role
-    ? writeBrief(c.hash, c.runId, run.state, run.commands, { id, role: st.role, stage: st.stage, attempt: st.attempt + 1, output_path, slice: st.slice }, c.root, extra)
+    ? writeBrief(c.hash, c.runId, run.state, run.commands, { id, role: st.role, stage: st.stage, attempt: st.attempt + 1, output_path, slice: st.slice }, c.root, brief)
     : undefined;
-  return makeEvent(c.runId, 'step_reissued', { old: st.id, new: id, output_path, ...(brief_path ? { brief_path } : {}), ...(st.kind === 'resume' ? { kind: 'spawn' as const } : {}) }, { corr: st.id });
+  const kind = o.agent_id ? { kind: 'resume' as const, agent_id: o.agent_id } : st.kind === 'resume' ? { kind: 'spawn' as const } : {};
+  return makeEvent(c.runId, 'step_reissued', { old: st.id, new: id, output_path, ...(brief_path ? { brief_path } : {}), ...kind, ...(o.repair ? { repair: o.repair } : {}) }, { corr: st.id });
 }
 
 // How many attempts the step's reissue chain holds: the step, and every step it was reissued from
 // (a parse failure, an orphan or a ruling's retry). A fresh step (a new round, a rework's respawn)
-// starts a chain of its own.
+// starts a chain of its own; so does a SCAFFOLD repair round (6-4): its step is attempt 1.
 export function attemptsInChain(commands: readonly AnyEvent[], stepId: string): number {
   const from = new Map<string, string>();
-  for (const e of commands) if (e.kind === 'step_reissued') from.set((e as Envelope<'step_reissued'>).data.new, (e as Envelope<'step_reissued'>).data.old);
+  const repairs = new Set<string>();
+  for (const e of commands) {
+    if (e.kind !== 'step_reissued') continue;
+    const d = (e as Envelope<'step_reissued'>).data;
+    from.set(d.new, d.old);
+    if (d.repair) repairs.add(d.new);
+  }
   let n = 1;
-  for (let id = from.get(stepId); id !== undefined && n <= from.size; id = from.get(id)) n += 1;
+  for (let id = stepId; !repairs.has(id) && from.has(id) && n <= from.size; id = from.get(id)!) n += 1;
   return n;
 }
 

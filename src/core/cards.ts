@@ -148,13 +148,16 @@ export function gate2Card(o: { slices: readonly SlicePlanEntry[]; lint: LintView
 }
 
 // `accept` is legal only over a parsed DONE run contract (its checks failed); otherwise there is
-// no contract to go on with, and the card offers retry and abandon.
-export function scaffoldFailureCard(o: { escalation: string; failures: readonly string[]; accept: boolean }): Card {
+// no contract to go on with, and the card offers retry and abandon. After a repair round (6-4) the
+// reason names both rounds: `round 1: <r1> · repair: <contract diff> · round 2: <failures>` (no
+// `repair:` part when the repair escalated).
+export function scaffoldFailureCard(o: { escalation: string; failures: readonly string[]; accept: boolean; rounds?: { r1: readonly string[]; repair?: string } }): Card {
+  const reason = o.failures.join('; ');
   return {
     type: 'scaffold_failure',
     title: 'SCAFFOLD failed — the project does not run as the run contract says',
     reason_label: 'Scaffold failed',
-    reason: o.failures.join('; '),
+    reason: o.rounds ? `round 1: ${o.rounds.r1.join('; ')}${o.rounds.repair !== undefined ? ` · repair: ${o.rounds.repair}` : ''} · round 2: ${reason}` : reason,
     ...withOptions([
       opt(`/factory rule ${o.escalation} retry <note…>`, 'the scaffolder runs again with your note, then the checks'),
       ...(o.accept ? [opt(`/factory rule ${o.escalation} accept`, 'SCAFFOLD is accepted as is and SPEC starts')] : []),

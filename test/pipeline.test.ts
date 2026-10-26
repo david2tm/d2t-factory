@@ -9,7 +9,8 @@ import { test, type TestContext } from 'node:test';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
-import { logTail } from '../src/cli/next.ts';
+import { contractDiff, logTail } from '../src/cli/next.ts';
+import { attemptsInChain } from '../src/cli/steps.ts';
 import { WAIT_MAX_MS } from '../src/core/config.ts';
 import { validateEvent } from '../src/core/events.ts';
 import { projectRun } from '../src/core/projection.ts';
@@ -371,6 +372,7 @@ test('a scaffolder ESCALATE raises the scaffold_failure card; Stop may end the t
   const crd = c.take(card('scaffold_failure'));
   assert.match(crd.card.reason, /Scaffold failed: the tests need a database/);
   assert.deepEqual(c.next().steps, []);
+  assert.deepEqual(repairs(w, id), [], '6-4: a first-round ESCALATE gets no repair round');
   const s = stateOf(w, id);
   assert.equal(s.steps[sc.step_id].state, 'reported');
   assert.equal(mayStop(s, []).may, true, 'parked on the card');
@@ -494,6 +496,15 @@ test('claim waiting (6-3): a scaffolder waiting on its checks is CLAIMED · chec
   assert.equal(lane2.cards.find((x) => x.id === 'stage:SCAFFOLD')!.claims.find((x) => x.step_id === sc.step_id)!.waiting_for, 'health, test');
 });
 
+// 6-4: the repair round. The scaffolder is resumed with a repair brief and re-reports `text` (the
+// contract it reported before, by default); with a DONE contract the checks run again.
+function repairRound(r: { c: ReturnType<typeof conductor>; sc: any }, text = readFileSync(r.sc.output_path, 'utf8'), agentId = 'ag-scaffold'): { step: any; checks: any[] } {
+  const step = r.c.take(byKind('resume', 'scaffolder'));
+  ok(r.c.agent(step, text, agentId));
+  return { step, checks: text.startsWith('STATUS: DONE') ? r.c.scaffoldChecks() : [] };
+}
+function repairs(w: World, id: string): any[] { return commands(w, id).filter((e) => e.kind === 'step_reissued' && e.data.repair); }
+
 test('SCAFFOLD done: a tracked file changed in the worktree raises scaffold_failure', (t) => {
   const w = world();
   const { c, wt } = toChecks(w, 'sa', t);
@@ -553,23 +564,31 @@ test('health as an http URL passes against the running dev server', SERVER, (t) 
 
 test('a dev server that exits fails health with "the dev server exited"; its log tail reaches the health log and the card', (t) => {
   const w = world();
-  const { c } = toChecks(w, 'sa', t, { start: `echo "Error: Port 5100 is already in use ${SECRET}" >&2; exit 1`, health: 'false' });
+  const r = toChecks(w, 'sa', t, { start: `echo "Error: Port 5100 is already in use ${SECRET}" >&2; exit 1`, health: 'false' });
+  const { c } = r;
   const [, health] = c.scaffoldChecks();
   assert.deepEqual([health.name, health.passed], ['contract.health', false]);
   const log = readFileSync(health.out, 'utf8');
   assert.match(log, /devserver\.log:\nError: Port 5100 is already in use \[REDACTED\]\nthe dev server exited\n$/);
+  // 6-4: a repair round first; the same contract fails again, so the card names both rounds.
+  const line = 'contract.health failed (exit 1): devserver.log: / Error: Port 5100 is already in use [REDACTED] / the dev server exited';
+  assert.deepEqual(repairRound(r).checks.map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', false], ['contract.test', true]]);
   const reason = c.take(card('scaffold_failure')).card.reason;
-  assert.equal(reason, 'contract.health failed (exit 1): devserver.log: / Error: Port 5100 is already in use [REDACTED] / the dev server exited');
+  assert.equal(reason, `round 1: ${line} · repair: no contract change · round 2: ${line}`);
 });
 
 test('install (dry run 1): SCAFFOLD runs the contract install first; a failed install raises scaffold_failure with its redacted log tail and runs neither health nor test', (t) => {
   const w = world();
-  const { id, c } = toChecks(w, 'sa', t, { install: `echo resolving; echo "npm ERR! 404 for ${SECRET}" >&2; exit 7` });
+  const r = toChecks(w, 'sa', t, { install: `echo resolving; echo "npm ERR! 404 for ${SECRET}" >&2; exit 7` });
+  const { id, c } = r;
   const n = c.next();
   assert.deepEqual(n.steps.map((x: any) => x.check), ['contract.install'], 'install alone, before health and test');
   assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', false]]);
+  // 6-4: the repair round re-reports the same contract; its install fails again.
+  const line = 'contract.install failed (exit 7): resolving / npm ERR! 404 for [REDACTED]';
+  assert.deepEqual(repairRound(r).checks.map((x) => [x.name, x.passed]), [['contract.install', false]]);
   const crd = c.take(card('scaffold_failure'));
-  assert.equal(crd.card.reason, 'contract.install failed (exit 7): resolving / npm ERR! 404 for [REDACTED]');
+  assert.equal(crd.card.reason, `round 1: ${line} · repair: no contract change · round 2: ${line}`);
   assert.deepEqual(crd.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon'], 'no accept: health and test never ran');
   const ran = commands(w, id).filter((e) => e.kind === 'check_ran').map((e) => e.data.check);
   assert.ok(!ran.includes('contract.health') && !ran.includes('contract.test'), JSON.stringify(ran));
@@ -584,6 +603,210 @@ test('install that rewrites a tracked file (a lockfile) fails git.worktree_clean
   assert.equal(c.take(card('scaffold_failure')).card.reason, 'tracked files changed in the worktree');
 });
 
+// --- 6-4: the SCAFFOLD repair round ----------------------------------------------------------------
+
+test('repair round (6-4): a failed install resumes the scaffolder with a repair brief and no card; the repaired contract passes, the scaffolder is verified and SPEC starts', (t) => {
+  const w = world();
+  const r = toChecks(w, 'sa', t, { install: `echo "fetching chrome"; echo "ENOENT ${SECRET}" >&2; exit 1` });
+  const { id, c, sc } = r;
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', false]]);
+  const install = commands(w, id).find((e) => e.kind === 'step_issued' && e.data.check === 'contract.install');
+  const n = c.next();
+  assert.equal(n.steps.some((x: any) => x.kind === 'ask_human'), false, 'no card');
+  const rep = n.steps.find(byKind('resume', 'scaffolder'));
+  assert.ok(rep, JSON.stringify(n));
+  assert.deepEqual([rep.agent_id, rep.attempt], ['ag-scaffold', 2]);
+  const line = 'contract.install failed (exit 1): fetching chrome / ENOENT [REDACTED]';
+  const ev = last(w, id, 'step_reissued');
+  assert.deepEqual(ev.data, { old: sc.step_id, new: rep.step_id, output_path: rep.output_path, brief_path: rep.brief_path, kind: 'resume', agent_id: 'ag-scaffold', repair: { failures: [line], checks: [install.id] } });
+  assert.ok(validateEvent(ev).ok);
+  assert.equal(commands(w, id).some((e) => e.kind === 'ask_raised'), false);
+  // The brief: the failure, the failed check's log and the previous contract among the inputs, the envelope, the cache dir.
+  const brief = readFileSync(rep.brief_path, 'utf8');
+  assert.ok(!brief.includes(SECRET), brief);
+  assert.match(brief, /## Repair round\n.*\n> contract\.install failed \(exit 1\): fetching chrome \/ ENOENT \[REDACTED\]\n/);
+  assert.ok(brief.includes(`- the failed contract.install log: ${install.data.output_path}`), brief);
+  assert.ok(brief.includes(`- your previous run contract, whose checks failed: ${sc.output_path}`), brief);
+  assert.ok(brief.includes("change only the contract's commands (env vars, flags, the package-manager command form, timeouts); point tool caches at `$FACTORY_CACHE_DIR`; never delete or edit anything outside the worktree; change no tracked file; add no dependency"), brief);
+  assert.match(brief, /on the project's side \(secrets, services, a broken repo\), write line 1 `STATUS: ESCALATE` and line 2 `Scaffold failed: <why>`\. Otherwise write the whole revised contract\./);
+  assert.ok(brief.includes(`- FACTORY_CACHE_DIR: ${join(runDir(w, id), 'cache')} `), brief);
+  // The resumed agent writes the revised contract; its checks pass.
+  c.claim(rep.step_id);
+  const fixed = scaffoldOut(contract(r.port, { start: 'sleep 30', health: 'true', install: 'PUPPETEER_SKIP_DOWNLOAD=1 true' }));
+  assert.equal(ok(c.agent(rep, fixed, 'ag-scaffold')).state, 'reported');
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
+  assert.deepEqual(c.next().steps.map((x: any) => x.agent), ['d2t-factory:spec-writer']);
+  const s = stateOf(w, id);
+  assert.deepEqual([s.steps[rep.step_id].state, s.phase], ['verified', 'SPEC_DESIGN']);
+  assert.equal(commands(w, id).some((e) => e.kind === 'ask_raised'), false, 'the human was never asked');
+  assert.deepEqual(s.rejected, []);
+});
+
+test('repair round (6-4): a repair whose install fails again raises one scaffold_failure naming both rounds and the contract diff; no second repair; after a human retry the next failure is a plain card', (t) => {
+  const w = world();
+  const r = toChecks(w, 'sa', t, { install: 'false' });
+  const { id, c, wt } = r;
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', false]]);
+  const again = scaffoldOut(contract(r.port, { start: 'sleep 30', health: 'true', install: 'PUPPETEER_SKIP_DOWNLOAD=1 false' }));
+  assert.deepEqual(repairRound(r, again).checks.map((x) => [x.name, x.passed]), [['contract.install', false]]);
+  const crd = c.take(card('scaffold_failure'));
+  assert.equal(crd.card.reason, 'round 1: contract.install failed (exit 1) · repair: install "false" → "PUPPETEER_SKIP_DOWNLOAD=1 false" · round 2: contract.install failed (exit 1)');
+  assert.deepEqual(crd.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon'], 'the accept rule is unchanged');
+  assert.equal(commands(w, id).filter((e) => e.kind === 'ask_raised').length, 1);
+  assert.equal(repairs(w, id).length, 1);
+  assert.deepEqual(c.next().steps, [], 'no second repair');
+  // A human retry ends the repair: its brief has no repair section, and the next failure is a plain card.
+  const rr = ok(decide(w, 'sa', 'rule E1 retry try harder', { cwd: wt }));
+  const sc3 = c.take(byKind('spawn', 'scaffolder'));
+  assert.equal(sc3.step_id, rr.reissued);
+  const brief = readFileSync(sc3.brief_path, 'utf8');
+  assert.ok(!brief.includes('## Repair round'), brief);
+  assert.match(brief, /E1 retry: try harder/);
+  ok(c.agent(sc3, again, 'ag-s3'));
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', false]]);
+  const crd2 = c.take(card('scaffold_failure'));
+  assert.equal(crd2.card.reason, 'contract.install failed (exit 1)');
+  assert.equal(repairs(w, id).length, 1);
+  assert.deepEqual(stateOf(w, id).rejected, []);
+});
+
+test('repair round (6-4): a repair that reports ESCALATE raises the card at once with both rounds', (t) => {
+  const w = world();
+  const r = toChecks(w, 'sa', t, { start: 'exit 1', health: 'false' });
+  const { id, c } = r;
+  assert.deepEqual(c.scaffoldChecks().map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', false], ['contract.test', true]]);
+  const d = repairRound(r, 'STATUS: ESCALATE\nScaffold failed: needs a database\n');
+  assert.deepEqual(d.checks, []);
+  const crd = c.take(card('scaffold_failure'));
+  assert.match(crd.card.reason, /^round 1: contract\.health failed \(exit 1\): .*the dev server exited · round 2: Scaffold failed: needs a database$/);
+  assert.equal(crd.card.reason.includes('repair:'), false);
+  assert.deepEqual(crd.card.commands, ['/factory rule E1 retry <note…>', '/factory abandon']);
+  assert.equal(commands(w, id).filter((e) => e.kind === 'ask_raised').length, 1);
+});
+
+test('repair round (6-4): a repair that changes a tracked file fails git.worktree_clean, and the card names both rounds', (t) => {
+  const w = world();
+  const r = toChecks(w, 'sa', t, { install: 'false' });
+  const { c, wt } = r;
+  c.scaffoldChecks();
+  const step = c.take(byKind('resume', 'scaffolder'));
+  writeFileSync(join(wt, 'test.js'), "console.log('patched');\n");
+  ok(c.agent(step, scaffoldOut(contract(r.port, { start: 'sleep 30', health: 'true' })), 'ag-scaffold'));
+  assert.deepEqual(c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
+  assert.equal(c.take(card('scaffold_failure')).card.reason, 'round 1: contract.install failed (exit 1) · repair: install "false" → "true" · round 2: tracked files changed in the worktree');
+});
+
+test('repair round (6-4): not repairable — a failed check beside a tracked-file change raises the card at once', (t) => {
+  const w = world();
+  const { id, c, wt } = toChecks(w, 'sa', t, { install: 'false' });
+  writeFileSync(join(wt, 'test.js'), "console.log('changed');\n");
+  c.scaffoldChecks();
+  assert.equal(c.take(card('scaffold_failure')).card.reason, 'contract.install failed (exit 1); tracked files changed in the worktree');
+  assert.deepEqual(repairs(w, id), []);
+});
+
+test('repair round (6-4): a resume whose agent is gone is reissued as a spawn that keeps the repair section', (t) => {
+  const w = world();
+  const r = toChecks(w, 'sa', t, { install: 'false' });
+  const { id, c } = r;
+  c.scaffoldChecks();
+  const step = c.take(byKind('resume', 'scaffolder'));
+  // SendMessage failed: the conductor runs done at once, and there is no output.
+  fails(c.done(step.step_id), 'MISSING_EVIDENCE', /no output file/);
+  const sp = c.take(byKind('spawn', 'scaffolder'));
+  assert.deepEqual([last(w, id, 'step_reissued').data.old, last(w, id, 'step_reissued').data.kind, sp.attempt], [step.step_id, 'spawn', 3]);
+  const brief = readFileSync(sp.brief_path, 'utf8');
+  assert.match(brief, /## Repair round\n.*\n> contract\.install failed \(exit 1\)\n/);
+  assert.ok(brief.includes(`- your previous run contract, whose checks failed: ${r.sc.output_path}`), brief);
+  // The spawn's contract passes: verified, no card.
+  ok(c.agent(sp, scaffoldOut(contract(r.port, { start: 'sleep 30', health: 'true' })), 'ag-s2'));
+  assert.deepEqual(c.scaffoldChecks().map((x) => x.passed), [true, true, true]);
+  assert.deepEqual(c.next().steps.map((x: any) => x.agent), ['d2t-factory:spec-writer']);
+  assert.equal(commands(w, id).some((e) => e.kind === 'ask_raised'), false);
+});
+
+test('FACTORY_CACHE_DIR (6-4): install, health, test and the dev server start all get the run cache dir, created first', SERVER, (t) => {
+  const w = world();
+  const r = toScaffold(w, 'sa', t);
+  const cache = join(runDir(w, r.id), 'cache');
+  const is = `test "$FACTORY_CACHE_DIR" = "${cache}" && test -d "$FACTORY_CACHE_DIR"`;
+  const sc = r.c.take(byKind('spawn', 'scaffolder'));
+  assert.ok(readFileSync(sc.brief_path, 'utf8').includes(`- FACTORY_CACHE_DIR: ${cache} `));
+  const k = { install: `${is} && echo "cache=$FACTORY_CACHE_DIR"`, test: `${is} && npm test --silent`, health: `${is} && npm run health --silent`, start: `${is} && npm start --silent` };
+  ok(r.c.agent(sc, scaffoldOut(contract(r.port, k)), 'ag-scaffold'));
+  const checks = r.c.scaffoldChecks();
+  assert.deepEqual(checks.map((x) => [x.name, x.passed]), [['contract.install', true], ['contract.health', true], ['contract.test', true]]);
+  assert.match(readFileSync(checks[0].out, 'utf8'), new RegExp(`cache=${cache}\\n`));
+  assert.ok(existsSync(cache));
+});
+
+test('greenfield (6-4): a failed test check raises the card at once, with no repair round', (t) => {
+  const w = world({ empty: true });
+  const s = 'sa';
+  const { id, c } = started(w, s);
+  t.after(() => { run(w, ['devserver', 'down', '--session', s]); });
+  ok(c.agent(c.take(byKind('spawn', 'framer')), frameOut('ui_surface: false\n'), 'ag-frame'));
+  const enter = c.take(byKind('enter_worktree'));
+  c.cwd = enter.path;
+  ok(c.done(enter.step_id));
+  writeApp(enter.path);
+  ok(c.agent(c.take(byKind('spawn', 'scaffolder')), scaffoldOut(contract(portOf(w, id), { start: 'sleep 30', health: 'true', copy_gitignored: [], test: 'false' })), 'ag-sc'));
+  assert.deepEqual(c.scaffoldChecks().map((x) => x.passed), [true, true, false]);
+  assert.equal(c.take(card('scaffold_failure')).card.reason, 'contract.test failed (exit 1)');
+  assert.deepEqual(repairs(w, id), []);
+});
+
+test('repair round (6-4): an orphaned repair step that wrote ESCALATE is reported by next after a takeover, with both rounds on the card', (t) => {
+  const w = world();
+  const r = toChecks(w, 'sa', t, { install: 'false' });
+  const { id, c, wt } = r;
+  c.scaffoldChecks();
+  const step = c.take(byKind('resume', 'scaffolder'));
+  // The resumed agent escalates and stops; sa never runs done.
+  agentWrites(w, 'sa', step, 'STATUS: ESCALATE\nScaffold failed: the registry needs a token\n', 'ag-scaffold');
+  agentStops(w, 'sa', step.agent, 'ag-scaffold');
+  say(w, 'sb', `resume ${id}`);
+  ok(run(w, ['resume', id, '--session', 'sb']));
+  const b = conductor(w, 'sb');
+  b.cwd = wt;
+  const crd = b.take(card('scaffold_failure'));
+  assert.match(crd.card.reason, /^round 1: contract\.install failed \(exit 1\) · round 2: Scaffold failed: the registry needs a token$/);
+  const rep = commands(w, id).find((e) => e.kind === 'step_reported' && e.data.step_id === step.step_id);
+  assert.equal(rep.actor, 'cli');
+  assert.equal(commands(w, id).filter((e) => e.kind === 'ask_raised').length, 1);
+});
+
+test('repair round (6-4): a rerun RECON at the round-2 card ends the repair: the fresh scaffolder\'s brief has no repair section and its failure card names no rounds', (t) => {
+  const w = world();
+  const r = toChecks(w, 'sa', t, { install: 'false' });
+  const { id, c } = r;
+  c.scaffoldChecks();
+  repairRound(r);
+  assert.match(c.take(card('scaffold_failure')).card.reason, /^round 1: /);
+  assert.equal(ok(decide(w, 'sa', 'rerun RECON', { cwd: c.cwd })).phase, 'ORIENT');
+  ok(c.agent(c.take(byKind('spawn', 'recon')), reconOut(), 'ag-recon-2'));
+  const sc = c.take(byKind('spawn', 'scaffolder'));
+  const brief = readFileSync(sc.brief_path, 'utf8');
+  assert.ok(!brief.includes('## Repair round'), brief);
+  ok(c.agent(sc, readFileSync(r.sc.output_path, 'utf8'), 'ag-s3'));
+  assert.deepEqual(c.scaffoldChecks().map((x) => x.passed), [false]);
+  const crd = c.take(card('scaffold_failure'));
+  assert.equal(crd.card.reason, 'contract.install failed (exit 1)');
+  assert.equal(repairs(w, id).length, 1);
+  assert.deepEqual(stateOf(w, id).rejected, []);
+});
+
+test('attemptsInChain (6-4): a repair reissue starts a chain of its own; contractDiff names a key on one side only, and lists as JSON', () => {
+  const re = (old: string, nw: string, repair?: object): any => ({ v: 1, id: `e-${nw}`, ts: '', run: 'r', kind: 'step_reissued', actor: 'cli', corr: old, data: { old, new: nw, ...(repair ? { repair } : {}) } });
+  const cmds = [re('A', 'B'), re('B', 'R', { failures: ['x'], checks: [] }), re('R', 'S'), re('S', 'T')];
+  assert.deepEqual(['A', 'B', 'R', 'S', 'T'].map((id) => attemptsInChain(cmds, id)), [1, 2, 1, 2, 3]);
+  assert.equal(contractDiff({ install: 'npm ci', test: 'npm test' }, { install: 'npm ci', test: 'npm test' }), 'no contract change');
+  assert.equal(contractDiff({ install: 'npm ci' }, { install: 'npm ci', e2e: 'npx playwright test' }), 'e2e "" → "npx playwright test"');
+  assert.equal(contractDiff({ install: 'npm ci', e2e: 'x' }, { install: 'npm ci' }), 'e2e "x" → ""');
+  assert.equal(contractDiff({ copy_gitignored: ['.env'], port: 5100 }, { copy_gitignored: ['.env', '.env.local'], port: 5100 }), 'copy_gitignored "[".env"]" → "[".env",".env.local"]"');
+  assert.equal(contractDiff(undefined, { install: 'true' }), 'install "" → "true"');
+});
+
 test('logTail: the last 3 non-empty lines without `$ cmd` and `[exit N]`, joined with " / ", at most 240 chars', () => {
   assert.equal(logTail('$ npm ci\na\n\nb\nc\nd\n[exit 1]\n'), 'b / c / d');
   assert.equal(logTail('$ exit 7\n\n[exit 7]\n'), '');
@@ -594,11 +817,13 @@ test('logTail: the last 3 non-empty lines without `$ cmd` and `[exit N]`, joined
 
 test('health passes only while the started pid lives: a server that died before health answered fails with "something else answers"', (t) => {
   const w = world();
-  const { c, port } = toChecks(w, 'sa', t, { start: 'exit 0', health: 'sleep 1' });
+  const r = toChecks(w, 'sa', t, { start: 'exit 0', health: 'sleep 1' });
+  const { c, port } = r;
   const [, health] = c.scaffoldChecks();
   assert.deepEqual([health.name, health.passed], ['contract.health', false]);
   assert.match(readFileSync(health.out, 'utf8'), new RegExp(`the dev server exited; something else answers on port ${port}`));
-  assert.match(c.take(card('scaffold_failure')).card.reason, new RegExp(`contract\\.health failed \\(exit 1\\): .*something else answers on port ${port}`));
+  repairRound(r);
+  assert.match(c.take(card('scaffold_failure')).card.reason, new RegExp(`^round 1: contract\\.health failed \\(exit 1\\): .*something else answers on port ${port} · repair: no contract change · round 2: contract\\.health failed`));
 });
 
 test('port taken before start: health is refused with CHECK_FAILED, nothing is spawned, and the step is reissued', SERVER, async (t) => {

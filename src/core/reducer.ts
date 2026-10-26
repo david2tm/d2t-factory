@@ -231,6 +231,7 @@ function step(s: RunState, e: AnyEvent): Reason {
       if (!old) return `unknown step ${e.data.old}`;
       if (!OPEN_STEP.includes(old.state)) return `step ${old.id} is ${old.state}`;
       if (s.steps[e.data.new]) return `step ${e.data.new} exists`;
+      if (e.data.kind === 'resume' && !e.data.agent_id) return 'resume requires agent_id';
       old.state = 'reissued';
       s.steps[e.data.new] = {
         ...old, id: e.data.new, state: 'issued', attempt: old.attempt + 1, claimed_by: undefined, sha: undefined, output: undefined,
@@ -238,6 +239,8 @@ function step(s: RunState, e: AnyEvent): Reason {
       };
       // 3-4: a reissued resume is a spawn, with no agent to continue.
       if (e.data.kind === 'spawn') { s.steps[e.data.new].kind = 'spawn'; delete s.steps[e.data.new].agent_id; }
+      // 6-4: a SCAFFOLD repair round resumes the reported scaffolder's agent.
+      else if (e.data.kind === 'resume') { s.steps[e.data.new].kind = 'resume'; s.steps[e.data.new].agent_id = e.data.agent_id; }
       s.step_order.push(e.data.new);
       return null;
     }
