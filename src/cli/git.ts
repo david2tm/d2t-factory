@@ -2,9 +2,9 @@
 // probes, the worktree (AD-15), the per-step commits (AD-30) and the merge.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { realpathSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { FactoryError } from '../core/errors.ts';
+import { realpathSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { FactoryError, sandboxDenied } from '../core/errors.ts';
 
 function git(cwd: string, args: string[]): string | null {
   try {
@@ -14,11 +14,24 @@ function git(cwd: string, args: string[]): string | null {
   }
 }
 
-function gitOrThrow(cwd: string, args: string[]): string {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  if (r.status !== 0) throw new FactoryError('BAD_ARGS', `git ${args.join(' ')} failed in ${cwd}: ${(r.stderr || r.error?.message || '').trim()}`);
+// What git prints when the OS refused a file (EPERM/EACCES): under the Claude Code sandbox, a
+// sandbox refusal. Used only to name the error (SANDBOX_DENIED), never to find refused files.
+const DENIED = /Operation not permitted|Permission denied/;
+
+export function gitOrThrow(cwd: string, args: string[], input?: string): string {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', input });
+  if (r.status !== 0) {
+    const err = (r.stderr || r.error?.message || '').trim();
+    const denied = err.split('\n').find((l) => DENIED.test(l));
+    if (denied) throw sandboxDenied(`git ${args.join(' ')} in ${cwd}: ${denied.trim()}`);
+    throw new FactoryError('BAD_ARGS', `git ${args.join(' ')} failed in ${cwd}: ${err}`);
+  }
   return r.stdout;
 }
+
+// Runs one git command (with optional stdin), throwing on failure (gitOrThrow). worktreeAdd takes
+// one so a test can fail a step.
+export type GitRun = (cwd: string, args: string[], input?: string) => string;
 
 export const sha256 = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
 
@@ -65,11 +78,52 @@ export function isWorktreeTop(path: string): boolean {
   try { return realpathSync(top) === realpathSync(path); } catch { return false; }
 }
 
-// `git worktree add <path> -b <branch> <base>`, or onto an existing branch on a retry.
-export function worktreeAdd(root: string, path: string, branch: string, base: string): void {
-  const exists = git(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]) !== null;
-  gitOrThrow(root, exists ? ['worktree', 'add', path, branch] : ['worktree', 'add', path, '-b', branch, base]);
+const branchExists = (root: string, branch: string): boolean => git(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]) !== null;
+const zList = (out: string): string[] => out.split('\0').filter(Boolean);
+
+// The worktree checks out what the sandbox allows (AD-15, 8-1), in four steps:
+//   1. `git worktree add --no-checkout <path> -b <branch> <base>` (onto an existing branch on a retry);
+//   2. `git reset -q` in the worktree (the index only);
+//   3. `git checkout-index -a`, which writes every file it can (a non-zero exit is expected: the
+//      sandbox refuses some tracked paths, whatever the writable roots are);
+//   4. every tracked file still missing (`git ls-files --deleted`; stderr is never parsed) is marked
+//      `git update-index --skip-worktree`, so `git status` stays clean and `git add -A` never stages it.
+// Returns those read-only paths, sorted: learned from the checkout, never listed in code. Any failure
+// removes the partial worktree and deletes the branch if this call created it, then rethrows.
+export function worktreeAdd(root: string, path: string, branch: string, base: string, run: GitRun = gitOrThrow): string[] {
+  const exists = branchExists(root, branch);
+  try {
+    run(root, exists ? ['worktree', 'add', '--no-checkout', path, branch] : ['worktree', 'add', '--no-checkout', path, '-b', branch, base]);
+    return checkOut(path, run);
+  } catch (e) {
+    spawnSync('git', ['worktree', 'remove', '--force', path], { cwd: root, stdio: 'ignore' });
+    spawnSync('git', ['worktree', 'prune'], { cwd: root, stdio: 'ignore' });
+    if (!exists && branchExists(root, branch)) spawnSync('git', ['branch', '-D', branch], { cwd: root, stdio: 'ignore' });
+    throw e;
+  }
 }
+
+// Steps 2-4 of worktreeAdd in a worktree (also run again on reuse, before SCAFFOLD is recorded, so
+// an add killed halfway is completed): the index from HEAD, every file the sandbox allows, and
+// skip-worktree on the rest. Returns every skip-worktree path, sorted: `reset -q` keeps the bits an
+// earlier run set, and checkout-index and `ls-files --deleted` pass over such entries, so on reuse
+// the paths skipped before are read only still.
+export function checkOut(path: string, run: GitRun = gitOrThrow): string[] {
+  run(path, ['reset', '-q']);
+  try {
+    run(path, ['checkout-index', '-a']);
+  } catch (e) {
+    // The refused files stay missing (step 4); any other failure (ENOSPC, EIO, …) is not the sandbox.
+    if (!(e instanceof FactoryError && e.code === 'SANDBOX_DENIED')) throw e;
+  }
+  const missing = zList(run(path, ['ls-files', '--deleted', '-z']));
+  if (missing.length) run(path, ['update-index', '-z', '--skip-worktree', '--stdin'], missing.map((p) => `${p}\0`).join(''));
+  return skippedPaths(path, run);
+}
+
+// The worktree's skip-worktree paths (`git ls-files -v` tag `S`), sorted: its read-only paths.
+export const skippedPaths = (cwd: string, run: GitRun = gitOrThrow): string[] =>
+  zList(run(cwd, ['ls-files', '-v', '-z'])).filter((l) => l.startsWith('S ')).map((l) => l.slice(2)).sort();
 
 // --- greenfield (AD-9, 5-2) ------------------------------------------------------------------
 
@@ -124,9 +178,31 @@ export const diffStat = (cwd: string, from: string, to: string, range: '..' | '.
 export const diffNames = (cwd: string, from: string, to: string): string[] =>
   (git(cwd, ['diff', '--name-only', `${from}..${to}`]) ?? '').split('\n').filter(Boolean);
 
+// The read-only paths (AD-15) the target changed since `from`: integrating it would have to write
+// them, and the sandbox refuses that.
+export function changedReadonly(cwd: string, from: string, to: string, readonly: readonly string[] | undefined): string[] {
+  if (!readonly?.length) return [];
+  const ro = new Set(readonly);
+  // --no-renames: a target that renamed or moved a read-only path lists its old name too.
+  return zList(gitOrThrow(cwd, ['diff', '--name-only', '--no-renames', '-z', `${from}..${to}`])).filter((f) => ro.has(f));
+}
+
+// Untracked files (not ignored) in a checkout, before an integration that might fail.
+export const untrackedFiles = (cwd: string): string[] => zList(gitOrThrow(cwd, ['ls-files', '--others', '--exclude-standard', '-z']));
+
+// A failed integration without MERGE_HEAD (spike 09: git wrote some of the target's files, then
+// failed) is undone: `reset -q --hard HEAD` (skip-worktree bits are kept), then every untracked file
+// that wasn't there before is removed. The worktree's status is then what it was before the merge.
+export function restoreAfterFailedMerge(cwd: string, untrackedBefore: readonly string[]): void {
+  gitOrThrow(cwd, ['reset', '-q', '--hard', 'HEAD']);
+  const before = new Set(untrackedBefore);
+  for (const f of untrackedFiles(cwd)) if (!before.has(f)) rmSync(join(cwd, f), { force: true });
+}
+
 export const mergeInProgress = (cwd: string): boolean => git(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']) !== null;
 
-export type MergeResult = { ok: true; sha: string } | { ok: false; conflicts: string[]; error: string };
+// merging: the failed merge left MERGE_HEAD (a conflict), and it was aborted.
+export type MergeResult = { ok: true; sha: string } | { ok: false; conflicts: string[]; error: string; merging: boolean };
 
 // The human-approved merge's message (AD-8): git's own default subject, which commitlint's default
 // ignores accept, with the task as the body. The target's hooks still run on it.
@@ -140,6 +216,7 @@ export function mergeInto(cwd: string, rev: string, message: string, o: { noFf?:
   const r = spawnSync('git', [...identity(cwd), 'merge', '-q', ...flags, '--no-edit', '-m', message, rev], { cwd, encoding: 'utf8' });
   if (r.status === 0) return { ok: true, sha: headSha(cwd) };
   const conflicts = (git(cwd, ['diff', '--name-only', '--diff-filter=U']) ?? '').split('\n').filter(Boolean);
-  if (mergeInProgress(cwd)) spawnSync('git', ['merge', '--abort'], { cwd, stdio: 'ignore' });
-  return { ok: false, conflicts, error: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() || `git merge exited ${r.status}` };
+  const merging = mergeInProgress(cwd);
+  if (merging) spawnSync('git', ['merge', '--abort'], { cwd, stdio: 'ignore' });
+  return { ok: false, conflicts, error: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() || `git merge exited ${r.status}`, merging };
 }

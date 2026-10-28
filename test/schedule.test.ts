@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { cutCard, designChoiceCard, gate1Card, intakeCard, intakeConfirmCard } from '../src/core/cards.ts';
+import { cutCard, designChoiceCard, gate1Card, intakeCard, intakeConfirmCard, readonlyDetail } from '../src/core/cards.ts';
 import type { AnyEvent } from '../src/core/events.ts';
 import { apply, fold, initialState, type RunState } from '../src/core/reducer.ts';
 import { due, type WrapProbe } from '../src/core/schedule.ts';
@@ -788,4 +788,16 @@ test('rerun DESIGN past gate 1 (3-4): the designer, gate 1 and its card are void
   w.finish(d2, designOut());
   const [g2] = due(w.s, IN);
   assert.deepEqual([g2.card?.type, g2.card?.title], ['gate_1', 'Gate 1 — Spec + Design ready']);
+});
+
+test('gate 1 (8-1) carries the run\'s read-only paths as its detail line; none without them', () => {
+  const paths = ['.mcp.json', '.vscode/settings.json'];
+  const w = toSpecDesign({ ui_free: true });
+  w.put('stage_started', { stage: 'SCAFFOLD', readonly_paths: paths });
+  specLinted(w);
+  const [g] = due(w.s, IN);
+  assert.deepEqual(g.card!.details, [readonlyDetail(paths)]);
+  const bare = toSpecDesign({ ui_free: true });
+  specLinted(bare);
+  assert.equal('details' in due(bare.s, IN)[0].card!, false);
 });

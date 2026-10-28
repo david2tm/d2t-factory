@@ -446,3 +446,12 @@ test('checks_running (7-2): a card\'s open run_check steps, in issue order; gone
   assert.equal(card(lw, 'stage:WRAP').column, 'in_progress');
   assert.deepEqual(checks(lw, 'stage:WRAP'), ['contract.health']);
 });
+
+test('SCAFFOLD plate (8-1): the read-only paths become its detail line; without them, no details key', () => {
+  const all = load('happy-path');
+  const at = all.findIndex((e) => e.kind === 'stage_completed') + 1;
+  const withRo = [...all.slice(0, at), ev('stage_started', { stage: 'SCAFFOLD', port: 4000, worktree: '/w', readonly_paths: ['.gitmodules', '.mcp.json'] }), ...all.slice(at)];
+  assert.deepEqual(card(lane(withRo), 'stage:SCAFFOLD').details, ['Read-only in this run (the sandbox refuses them): .gitmodules, .mcp.json']);
+  for (const c of lane(withRo).cards.filter((x) => x.id !== 'stage:SCAFFOLD')) assert.equal('details' in c, false, c.id);
+  assert.equal('details' in card(lane(all), 'stage:SCAFFOLD'), false);
+});

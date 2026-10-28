@@ -115,7 +115,7 @@ function spec(s: RunState): DueStep[] {
   const d = withDesign ? readyDesign(s) : undefined;
   if (withDesign && !d) return [];
   const design = d ? { path: String(d.output?.path ?? d.output_path), mode: String((d.output?.front as Record<string, unknown> | undefined)?.mode ?? designMode(s)), assumptions: assumptionsOf(d) } : undefined;
-  return [{ kind: 'ask_human', stage: 'SPEC', attempt: 1, card: gate1Card({ spec_path: String(sw.output?.path ?? sw.output_path), assumptions: assumptionsOf(sw), lint: lintView(lint), ...(design ? { design } : {}) }) }];
+  return [{ kind: 'ask_human', stage: 'SPEC', attempt: 1, card: gate1Card({ spec_path: String(sw.output?.path ?? sw.output_path), assumptions: assumptionsOf(sw), lint: lintView(lint), ...(design ? { design } : {}), readonly: s.readonly_paths }) }];
 }
 
 // DESIGN (3-2), beside SPEC: the designer when one is required; a voided design (a non-default

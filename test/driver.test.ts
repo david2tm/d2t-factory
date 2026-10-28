@@ -826,6 +826,21 @@ test('start while a live run holds the exclusive claim: REFUSED_EXCLUSIVE naming
   assert.notEqual(b, a);
 });
 
+test('start preflight (8-1, AD-35): a refused bind probe is SANDBOX_DENIED naming sandbox.network.allowLocalBinding, before run_started: no run dir, no binding, the prompt unconsumed', () => {
+  const w = world();
+  const p = say(w, 'sa', 'add login');
+  const r = run(w, ['start', '--session', 'sa'], { env: { FACTORY_TEST_BIND_DENIED: '1' } });
+  fails(r, 'SANDBOX_DENIED');
+  assert.equal(r.out.error.message, 'listen on 127.0.0.1:0 (EPERM; sandbox.network.allowLocalBinding): the sandbox refused this; it is a factory defect, report it (AD-35)');
+  assert.deepEqual(readdirSync(w.home).filter((n) => existsSync(join(w.home, n, 'runs'))), [], 'no run dir');
+  assert.equal(consumed(w, p), null);
+  assert.equal(sessionFile(w, 'sa'), null);
+  assert.equal(existsSync(join(w.repo, '.claude')), false, 'the probes leave nothing in the repo');
+  // The same prompt starts once the probe passes.
+  ok(run(w, ['start', '--session', 'sa']));
+  assert.equal(consumed(w, p), 'started');
+});
+
 test('a stale exclusive claim (its run terminal, or gone) is broken and does not refuse start', () => {
   const w = world();
   const a = started(w, 'sa', 'first task');

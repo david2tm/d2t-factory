@@ -19,3 +19,12 @@
 - source_spec: `_bmad-output/planning-artifacts/sprint-change-proposal-2026-10-28.md`
   summary: Find out why `mkdir .vscode` was refused in dry run 3's TodoApp session but allowed in spike 09's session (same Claude Code 2.1.312).
   evidence: Not blocking: file writes inside `.vscode/` are refused in both, and 8-1 skips by result, not by list. It might be a pre-existing-directory or settings difference.
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/8-1-worktree-checks-out-what-the-sandbox-allows.md`
+  summary: Add a test seam so a pipeline test can give a run read-only paths, then cover `startScaffold` emitting `stage_started.readonly_paths` and `wrapProbe` refusing through `state.readonly_paths`.
+  evidence: The 8-1 review (verification gap) found that dropping either wiring passes every unsandboxed test. Only the sandboxed conformance run and dry runs cover it.
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/8-1-worktree-checks-out-what-the-sandbox-allows.md`
+  summary: When a target adds a new file in a sandbox-refused directory (e.g. `.vscode/extensions.json`), WRAP shows the generic `cannot integrate …` problem rather than the hand-merge text.
+  evidence: `changedReadonly` matches only paths that existed at the base. `test/sandbox.test.ts` shows the merge failing without MERGE_HEAD and the worktree being restored, but the card's text gives the human no next step.
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/8-1-worktree-checks-out-what-the-sandbox-allows.md`
+  summary: The start preflight doesn't probe the `.git` writes that `git worktree add` makes (`.git/worktrees/<name>/`, `refs/heads/factory/…`).
+  evidence: Unverified (maybe-false, medium if true). During 8-1, `git init` of a nested repo under the session cwd was refused on `.git/config`. To settle it, run `worktree add` from a sandboxed session on a real repo (dry run 4).

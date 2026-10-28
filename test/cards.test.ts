@@ -283,3 +283,19 @@ test('every card function (6-2): commands deep-equals options.map(command); ever
     if (name !== 'signalLostCard') assert.ok(c.reply?.trim(), `${name}: a reply line`);
   }
 });
+
+test('read-only detail (8-1): Gate 1 and SCAFFOLD failure cards carry `Read-only in this run …` with the paths, after the reason; none without paths', () => {
+  const lint = { ok: true, errors: [] };
+  const ro = ['.mcp.json', '.vscode/settings.json'];
+  const line = 'Read-only in this run (the sandbox refuses them): .mcp.json, .vscode/settings.json';
+  assert.equal(cards.readonlyDetail(ro), line);
+  const g = gate1Card({ spec_path: '/s.md', assumptions: 1, lint, readonly: ro });
+  assert.deepEqual(g.details, [line]);
+  assert.deepEqual(cardLines(g).slice(0, 3), ['Gate 1 — approve the spec', '/s.md · 1 assumption to check', line]);
+  const sf = cards.scaffoldFailureCard({ escalation: 'E1', failures: ['contract.test failed (exit 1)'], accept: true, readonly: ro });
+  assert.deepEqual(sf.details, [line]);
+  assert.equal(cardLines(sf)[2], line);
+  for (const c of [gate1Card({ spec_path: '/s.md', assumptions: 1, lint }), gate1Card({ spec_path: '/s.md', assumptions: 1, lint, readonly: [] }), cards.scaffoldFailureCard({ escalation: 'E1', failures: ['x'], accept: true, readonly: [] })]) {
+    assert.equal('details' in c, false, 'no detail line, and no key: old runs replay unchanged');
+  }
+});

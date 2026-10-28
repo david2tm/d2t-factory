@@ -338,3 +338,12 @@ test('escalation_ruled moves the slice to slice_to, CUT included (3-4); stage_re
   assert.deepEqual([c.s.phase, c.s.slice_order, Object.values(c.s.asks).map((a) => a.open), c.s.voided], ['SLICE_PLAN', [], [false, false], ['V1']]);
   assert.match(apply(c.s, ev3('stage_rerun_requested', { prompt_fact_id: 'f', stage: 'WRAP', voids: [] }, { actor: 'human' })).reason!, /WRAP cannot be rerun/);
 });
+
+test('stage_started.readonly_paths (8-1) is copied onto the state only when present', () => {
+  const [started] = load('happy-path');
+  const st = (data: object): AnyEvent => ({ ...started, id: '01JQZZZZZZZZZZZZZZZZZZZ999', kind: 'stage_started', data } as unknown as AnyEvent);
+  const withRo = fold([started, st({ stage: 'SCAFFOLD', port: 4000, worktree: '/w', readonly_paths: ['.mcp.json'] })]);
+  assert.deepEqual([withRo.worktree, withRo.readonly_paths], ['/w', ['.mcp.json']]);
+  assert.ok(validateEvent(st({ stage: 'SCAFFOLD', readonly_paths: ['.mcp.json'] })).ok);
+  assert.equal('readonly_paths' in fold([started, st({ stage: 'SCAFFOLD', port: 4000, worktree: '/w' })]), false);
+});

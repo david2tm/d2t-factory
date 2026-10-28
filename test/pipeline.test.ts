@@ -146,6 +146,7 @@ test('acceptance: the whole front half through bin/factory ends in BUILD with S1
   assert.equal(sc1.data.recon.sha256, sha(reconOut()));
   const ss = last(w, id, 'stage_started');
   assert.deepEqual({ stage: ss.data.stage, worktree: ss.data.worktree }, { stage: 'SCAFFOLD', worktree: join(w.repo, '.claude', 'worktrees', `factory-${id}`) });
+  assert.equal('readonly_paths' in ss.data, false, '8-1: nothing refused, so no readonly_paths');
   assert.equal(enter.path, ss.data.worktree);
   assert.ok(existsSync(join(w.home, 'ports', String(ss.data.port))));
   assert.match(readFileSync(join(w.repo, '.git', 'info', 'exclude'), 'utf8'), /^\.claude\/worktrees\/$/m);
@@ -173,6 +174,8 @@ test('acceptance: the whole front half through bin/factory ends in BUILD with S1
   const g1 = c.take(card('gate_1'));
   assert.match(g1.card.reason, /1 assumption to check/);
   assert.ok(g1.card.reason.includes(sw1.output_path));
+  assert.equal('details' in g1.card, false, '8-1: no read-only detail line');
+  assert.ok(!g1.card_text.includes('Read-only in this run'), g1.card_text);
 
   // rework gate1 → a fresh spec-writer with the note and the prior spec → spec.lint → gate 1 again.
   const rw1 = ok(decide(w, s, 'rework gate1 make the footer grey', { cwd: c.cwd }));
@@ -1029,6 +1032,18 @@ test('briefs (6-2 deferred): spec-writer, slicer, builder and designer briefs ca
   // Human text: redacted with the run's values.
   const secret = briefText(state, [], sw, w.repo, {}, ['sitemap']);
   assert.ok(!secret.includes('sitemap') && secret.includes('- in scope: the footer; its [REDACTED] link'), secret);
+  // 8-1: no read-only paths, no such input; with them, each names its main-checkout path, for the
+  // builder and the reviewers, never for the orientation agents.
+  const b1 = { id: 'b1', role: 'builder', stage: 'BUILD', attempt: 1, output_path: '/x/out.md', slice: 'S1' } as const;
+  assert.ok(!briefText(state, [], b1, w.repo).includes('read only in this run'));
+  const ro = { ...state, readonly_paths: ['.mcp.json', '.vscode/settings.json'] };
+  for (const step of [b1, { ...b1, id: 'rv1', role: 'reviewer-code' }]) {
+    const text = briefText(ro, [], step, w.repo);
+    for (const p of ro.readonly_paths) {
+      assert.ok(text.includes(`- ${p}, read only in this run (missing from the worktree: the sandbox refuses it there; read it here, change nothing): ${join(w.repo, p)}\n`), text);
+    }
+  }
+  assert.ok(!briefText(ro, [], { id: 'r2', role: 'recon', stage: 'RECON', attempt: 1, output_path: '/x/out.md' }, w.repo).includes('read only in this run'));
 });
 
 test('build: a builder brief, a commit per parsed done (an empty diff too), none on a parse error; a builder ESCALATE parks the slice and retry reissues it', (t) => {

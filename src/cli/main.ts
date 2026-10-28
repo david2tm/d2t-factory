@@ -1,5 +1,5 @@
 // factory CLI. JSON on stdout; failures exit non-zero with {error:{code,message}}.
-import { FactoryError } from '../core/errors.ts';
+import { deniedWhat, FactoryError, isDenied, sandboxDenied } from '../core/errors.ts';
 import { parseArgs, type Args } from './args.ts';
 import { check } from './check.ts';
 import { claim } from './claim.ts';
@@ -32,8 +32,16 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(JSON.stringify(out) + '\n');
     return 0;
   } catch (e) {
-    const err = e instanceof FactoryError ? { code: e.code, message: e.message } : { code: 'BAD_ARGS', message: String((e as Error)?.stack ?? e) };
-    process.stdout.write(JSON.stringify({ error: err }) + '\n');
+    process.stdout.write(JSON.stringify({ error: errorOf(e) }) + '\n');
     return 1;
   }
+}
+
+// A thrown error as {code, message}: a FactoryError as is; an fs or net EPERM/EACCES naming a path
+// or address is SANDBOX_DENIED naming it (AD-35), never BAD_ARGS; anything else (a path-less EPERM,
+// like a refused process.kill, included) is BAD_ARGS with its stack.
+export function errorOf(e: unknown): { code: string; message: string } {
+  const named = isDenied(e) && (e.path !== undefined || (e as { address?: unknown }).address !== undefined);
+  const x = e instanceof FactoryError ? e : named ? sandboxDenied(deniedWhat(e as NodeJS.ErrnoException)) : null;
+  return x ? { code: x.code, message: x.message } : { code: 'BAD_ARGS', message: String((e as Error)?.stack ?? e) };
 }

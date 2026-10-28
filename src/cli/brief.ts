@@ -11,7 +11,7 @@ import type { RunState } from '../core/reducer.ts';
 import { appReviewerTools, isAppReviewer, isDiffReviewer, REVIEWERS, SLICE_TAGS, sliceRoster } from '../core/roster.ts';
 import { activeScaffoldRepair, designMode, isVoided, latestByRole, latestDesign, latestSpec, latestStep, roundFailure, roundOf, sliceDeps, uiReference } from '../core/verify.ts';
 import { readRedactValues } from '../store/load-run.ts';
-import { briefFile, playwrightDir, runCacheDir } from '../store/paths.ts';
+import { briefFile, inCheckout, playwrightDir, runCacheDir } from '../store/paths.ts';
 import { contractOf } from './devserver.ts';
 
 export interface BriefStep { id: string; role: string; stage: Stage; attempt: number; output_path: string; slice?: string }
@@ -221,6 +221,11 @@ function inputs(state: RunState, step: BriefStep, root: string, repair?: BriefRe
   if (design?.output_path) out.push(['the approved design (pinned at gate 1)', design.output_path]);
   if ((step.role === 'spec-writer' || step.role === 'builder' || isAppReviewer(step.role)) && contract?.output_path) out.push(['run contract from SCAFFOLD', contract.output_path]);
   if (!orienting(step.role) && state.worktree) out.push(['the worktree (product code)', state.worktree]);
+  // 8-1 (AD-15): the tracked files the sandbox refused to check out are missing from the worktree;
+  // each is read from the main checkout, and nothing may change it.
+  if (!orienting(step.role)) {
+    for (const p of state.readonly_paths ?? []) out.push([`${p}, read only in this run (missing from the worktree: the sandbox refuses it there; read it here, change nothing)`, inCheckout(root, p)]);
+  }
   if (step.role === 'builder' && step.slice) {
     for (const input of previousRound(state, step.slice)?.inputs ?? []) if (input[1]) out.push(input);
   }

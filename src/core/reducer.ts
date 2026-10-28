@@ -80,6 +80,7 @@ export interface RunState {
   // Set only once the run reaches them (absent in earlier runs' snapshots).
   port?: number;
   worktree?: string;
+  readonly_paths?: string[]; // 8-1: stage_started.readonly_paths, only when the event carries it
   recon?: ReconEmbed;
   intake?: Intake; // 3-1: from intake_confirmed.data.intake
   clock_start?: string; // 3-1: where the budget clock starts (intake_confirmed.data.clock_start)
@@ -152,6 +153,7 @@ function step(s: RunState, e: AnyEvent): Reason {
     case 'stage_started':
       if (e.data.port !== undefined) s.port = e.data.port;
       if (e.data.worktree !== undefined) s.worktree = e.data.worktree;
+      if (e.data.readonly_paths !== undefined) s.readonly_paths = e.data.readonly_paths;
       return null;
 
     case 'stage_completed': {

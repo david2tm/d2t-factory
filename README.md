@@ -59,6 +59,13 @@ The `sandbox` block is only needed when you run with the sandbox on. The dry run
 
 The factory never runs a command outside the sandbox and never asks you to change it mid-run. If a run fails on a sandbox denial, that's a factory bug: report it. Setup and the settings above cover what the factory needs.
 
+What the sandbox means for a run:
+
+- **Some tracked files are read-only for the run.** The sandbox refuses writes to some paths under the session's directory whatever the writable roots are (in Claude Code 2.1.312: files in `.vscode/`, `.idea/`, `.claude/commands/`, `.claude/agents/`, plus `.mcp.json`, `.gitmodules` and a few others). The worktree checks out every tracked file it can and leaves the refused ones out, marked skip-worktree. The factory keeps no list: whatever your Claude Code refuses is what is left out. The SCAFFOLD and Gate 1 cards name them (`Read-only in this run (the sandbox refuses them): …`). Agents read them from the main checkout, commits never touch them, and the final merge leaves them as they are. If your branch changes one of them during the run, WRAP won't integrate it; merge by hand in your own terminal, or abandon.
+- **`SANDBOX_DENIED`.** A file or git operation the sandbox refuses is reported as this error, naming the path, and the conductor prints it and stops. It is a factory defect: report it rather than loosening the sandbox.
+- **The preflight.** `/factory <task>` first checks, inside the sandbox, that it can create a file under `<repo>/.claude/worktrees/`, open `.git/info/exclude` for append, write under `~/.factory/<repo-hash>/` and listen on `127.0.0.1`. If any check is refused, the run doesn't start (`SANDBOX_DENIED`, naming the path, or `sandbox.network.allowLocalBinding` for the listener) and nothing is written.
+- **After every Claude Code upgrade**, run the tests once from a sandboxed Claude Code session in this repo, before the next run: `node --test test/*.test.ts` (there is no root `package.json`, so no `npm test`). `test/sandbox.test.ts` runs the CLI's git under the session's sandbox. Its first line, `sandbox conformance: sandboxed` (or `unsandboxed`), records which mode ran; note it in the dry-run checklist.
+
 ### 5. A launcher
 
 The factory loads per session with `--plugin-dir`. Nothing is installed into Claude, nothing lands in the target repo, and edits to the plugin take effect in the next session.

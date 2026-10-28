@@ -29,7 +29,8 @@ import { claimPort, refusedExclusive, releaseClaims, scaffoldConflict } from './
 import { appendAll, gateOrThrow, makeEvent, stepView } from './commit.ts';
 import { contractOf, devserverDown } from './devserver.ts';
 import {
-  commitAll, currentBranch, diffNames, diffStat, dirty, head, headTreeEmpty, isAncestor, mergeInProgress, mergeInto, mergeMessage, repoRoot, sha256, statusDigest, trackedClean,
+  changedReadonly, commitAll, currentBranch, diffNames, diffStat, dirty, head, headTreeEmpty, isAncestor, mergeInProgress, mergeInto, mergeMessage, repoRoot, restoreAfterFailedMerge, sha256,
+  statusDigest, trackedClean, untrackedFiles,
 } from './git.ts';
 import { writeRecording } from './record.ts';
 import { requireHolder, requireRun, requireSession } from './resolve.ts';
@@ -98,9 +99,10 @@ const reconRerun = (run: Pick<LoadedRun, 'commands'>): boolean =>
   run.commands.some((e) => e.kind === 'stage_rerun_requested' && (e as Envelope<'stage_rerun_requested'>).data.stage === 'RECON');
 
 // WRAP, unlocked: integrate the main checkout's current branch head into the run branch when the
-// run branch doesn't contain it yet (a clean merge only, committed by the CLI without the repo's
-// commit hooks; a conflict is aborted and reported), then probe what the merge card needs. Only the
-// holder integrates; for anyone else an unintegrated target is a problem.
+// run branch doesn't contain it yet (integrateTarget: a clean merge only, committed by the CLI
+// without the repo's commit hooks; a failure leaves the worktree as it was and is reported), then
+// probe what the merge card needs. Only the holder integrates; for anyone else an unintegrated
+// target is a problem.
 function wrapProbe(c: Ctx, state: RunState, integrate: boolean): WrapProbe | undefined {
   const wt = state.worktree;
   if (!wt || !existsSync(wt) || !state.base_sha) return undefined;
@@ -110,14 +112,9 @@ function wrapProbe(c: Ctx, state: RunState, integrate: boolean): WrapProbe | und
   if (!branch) problems.push('the main checkout is on a detached HEAD: check out the branch to merge into');
   else if (target && !isAncestor(wt, target, head(wt))) {
     if (mergeInProgress(wt)) problems.push(`a merge is in progress in the worktree: commit the resolution on ${state.branch}`);
-    else if (!integrate) problems.push(`${branch} is not integrated into ${state.branch} yet`);
     else {
-      const m = mergeInto(wt, target, `factory: integrate ${branch} into ${state.branch}`, { noVerify: true });
-      if (!m.ok) {
-        problems.push(m.conflicts.length
-          ? `conflicts with ${branch}: ${m.conflicts.join(', ')} (merge ${branch} into ${state.branch} in the worktree, resolve and commit)`
-          : `cannot integrate ${branch}: ${m.error.split('\n')[0]}`);
-      }
+      const problem = integrateTarget(wt, { base: state.base_sha, target, branch, runBranch: state.branch!, readonly: state.readonly_paths, integrate });
+      if (problem) problems.push(problem);
     }
   }
   const tip = head(wt);
@@ -125,6 +122,30 @@ function wrapProbe(c: Ctx, state: RunState, integrate: boolean): WrapProbe | und
   const diffstat = target ? diffStat(wt, target, tip, '...') : diffStat(wt, state.base_sha, tip);
   const values = readRedactValues(c.hash, c.runId);
   return { head: tip, target, branch, diffstat, problems: problems.map((x) => redactString(x, values)) };
+}
+
+// The integration refusal (AD-15, 8-1): the target changed a read-only path.
+export const readonlyRefusal = (paths: readonly string[]): string =>
+  `The target changed ${paths.join(', ')} since the run started, and the sandbox won't let the factory check them out. Merge by hand in your own terminal, or abandon.`;
+
+// WRAP's integration of the target into the run branch, in the worktree; returns the problem for the
+// merge card, or null once integrated. A target that changed a read-only path is refused before any
+// merge (AD-15). Only the holder integrates (`integrate`). A failed merge of any kind leaves the
+// worktree as it was: a conflict is aborted (mergeInto), and a failure without MERGE_HEAD in a
+// worktree with no uncommitted tracked edits is reset and its new untracked files removed (spike 09).
+// With such edits git refuses before writing anything, and a reset would lose them.
+export function integrateTarget(wt: string, o: { base: string; target: string; branch: string; runBranch: string; readonly?: readonly string[]; integrate: boolean }): string | null {
+  const refused = changedReadonly(wt, o.base, o.target, o.readonly);
+  if (refused.length) return readonlyRefusal(refused);
+  if (!o.integrate) return `${o.branch} is not integrated into ${o.runBranch} yet`;
+  const before = untrackedFiles(wt);
+  const clean = trackedClean(wt); // a reset would throw away uncommitted tracked edits
+  const m = mergeInto(wt, o.target, `factory: integrate ${o.branch} into ${o.runBranch}`, { noVerify: true });
+  if (m.ok) return null;
+  if (!m.merging && clean) restoreAfterFailedMerge(wt, before);
+  return m.conflicts.length
+    ? `conflicts with ${o.branch}: ${m.conflicts.join(', ')} (merge ${o.branch} into ${o.runBranch} in the worktree, resolve and commit)`
+    : `cannot integrate ${o.branch}: ${m.error.split('\n')[0]}`;
 }
 
 // While an approved merge is pending (dry run 2) WRAP is not probed: nothing is integrated into the
@@ -200,11 +221,12 @@ function completeOrient(c: Ctx, run: LoadedRun, ctx: ScheduleCtx): AnyEvent[] {
   return events;
 }
 
-// SCAFFOLD starts: the port claim, then the worktree (AD-15, AD-20).
+// SCAFFOLD starts: the port claim, then the worktree (AD-15, AD-20) with its read-only paths (8-1),
+// recorded only when there are any.
 function startScaffold(c: Ctx, state: RunState): AnyEvent[] {
   const port = claimPort(c.runId);
-  const worktree = prepareWorktree(c.root, c.runId, state.base_sha!, state.branch!);
-  return [makeEvent(c.runId, 'stage_started', { stage: 'SCAFFOLD', port, worktree }, { corr: state.run_id! })];
+  const { path: worktree, readonly } = prepareWorktree(c.root, c.runId, state.base_sha!, state.branch!);
+  return [makeEvent(c.runId, 'stage_started', { stage: 'SCAFFOLD', port, worktree, ...(readonly.length ? { readonly_paths: readonly } : {}) }, { corr: state.run_id! })];
 }
 
 // What a failed check's log ends with, for its line on a card: the last 3 non-empty lines of its
@@ -294,7 +316,7 @@ function finishScaffold(c: Ctx, run: LoadedRun, sc: Step): AnyEvent[] {
     // failed install: health and test never ran.
     const active = activeScaffoldRepair(run.commands);
     const rounds = active ? { r1: active.repair.failures, repair: contractDiff(frontOf(state.steps[active.old]), frontOf(sc)) } : undefined;
-    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict && !state.greenfield && installed, ...(rounds ? { rounds } : {}) })));
+    events.push(raise(c, state, sc, (e) => scaffoldFailureCard({ escalation: e, failures, accept: !conflict && !state.greenfield && installed, ...(rounds ? { rounds } : {}), readonly: state.readonly_paths })));
   } else {
     // Idempotent: a round that is not appended leaves the commit, and the next finds a clean worktree.
     const scaffold = state.greenfield ? [`scaffold:${changed ? commitAll(wt, `factory: scaffold (${sc.id})`) : head(wt)}`] : [];

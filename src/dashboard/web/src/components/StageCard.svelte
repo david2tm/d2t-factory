@@ -21,6 +21,7 @@
     <span>{card.label}</span>
     {#if card.state === 'abandoned'}<small>abandoned</small>{/if}
   </div>
+  {#if card.details?.length}<div class="details">{#each card.details as line, i (i)}<p>{line}</p>{/each}</div>{/if}
   {#if lost}<div class="lost-tag"><i></i>SIGNAL LOST <span>· last seen {lost}</span></div>{/if}
   <ClaimList lane={key} card={card.id} claims={card.claims} {now} />
   {#if seals.length}
@@ -48,6 +49,8 @@
   }
   .ph { display: flex; align-items: center; gap: 8px; font: 700 12px/1 var(--mono); letter-spacing: .1em; color: var(--holo-text); text-shadow: 0 0 8px color-mix(in srgb, var(--holo) 50%, transparent); }
   .ph small { margin-left: auto; font: 500 11px/1 var(--mono); letter-spacing: .02em; color: var(--text-3); text-shadow: none; }
+  .details { margin-top: 6px; position: relative; z-index: 1; }
+  .details p { margin: 0; font: 500 11px/1.4 var(--mono); color: var(--text-3); overflow-wrap: anywhere; }
   .seals { margin-top: 7px; display: grid; gap: 4px; position: relative; z-index: 1; }
   .plate :global(.rows) { position: relative; z-index: 1; }
 

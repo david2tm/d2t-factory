@@ -88,15 +88,21 @@ function lintNote(lint: LintView, name: string): string {
   return lint.ok ? '' : ` · ${name} failed: ${lint.errors.join('; ')}`;
 }
 
+// The tracked files the sandbox refused to check out into the worktree (AD-15, 8-1), as the detail
+// line on the SCAFFOLD and Gate 1 cards. Nothing when there are none (old runs replay unchanged).
+export const readonlyDetail = (paths: readonly string[]): string => `Read-only in this run (the sandbox refuses them): ${paths.join(', ')}`;
+const readonlyDetails = (paths: readonly string[] | undefined): { details?: string[] } => (paths?.length ? { details: [readonlyDetail(paths)] } : {});
+
 // With a designer (3-2) the card names both files and counts the spec's and the design's assumptions;
-// without one it is the spec-only card.
-export function gate1Card(o: { spec_path: string; assumptions: number; lint: LintView; design?: { path: string; mode: string; assumptions: number } }): Card {
+// without one it is the spec-only card. `readonly`: the run's read-only paths (8-1).
+export function gate1Card(o: { spec_path: string; assumptions: number; lint: LintView; design?: { path: string; mode: string; assumptions: number }; readonly?: readonly string[] }): Card {
   const d = o.design;
   return {
     type: 'gate_1',
     title: d ? 'Gate 1 — Spec + Design ready' : 'Gate 1 — approve the spec',
     reason_label: d ? 'Spec + Design' : 'Spec',
     reason: `${o.spec_path} · ${d ? `${d.path} (${d.mode}) · ` : ''}${plural(o.assumptions + (d?.assumptions ?? 0), 'assumption')} to check${lintNote(o.lint, 'spec.lint')}`,
+    ...readonlyDetails(o.readonly),
     ...withOptions([
       ...(o.lint.ok ? [opt('/factory approve gate1', 'SLICE PLAN splits the spec into slices; the next stop is Gate 2')] : []),
       opt('/factory rework gate1 <note…>', `${d ? 'SPEC and DESIGN are' : 'SPEC is'} redone with your note; Gate 1 comes back`),
@@ -150,14 +156,15 @@ export function gate2Card(o: { slices: readonly SlicePlanEntry[]; lint: LintView
 // `accept` is legal only over a parsed DONE run contract (its checks failed); otherwise there is
 // no contract to go on with, and the card offers retry and abandon. After a repair round (6-4) the
 // reason names both rounds: `round 1: <r1> · repair: <contract diff> · round 2: <failures>` (no
-// `repair:` part when the repair escalated).
-export function scaffoldFailureCard(o: { escalation: string; failures: readonly string[]; accept: boolean; rounds?: { r1: readonly string[]; repair?: string } }): Card {
+// `repair:` part when the repair escalated). `readonly`: the run's read-only paths (8-1).
+export function scaffoldFailureCard(o: { escalation: string; failures: readonly string[]; accept: boolean; rounds?: { r1: readonly string[]; repair?: string }; readonly?: readonly string[] }): Card {
   const reason = o.failures.join('; ');
   return {
     type: 'scaffold_failure',
     title: 'SCAFFOLD failed — the project does not run as the run contract says',
     reason_label: 'Scaffold failed',
     reason: o.rounds ? `round 1: ${o.rounds.r1.join('; ')}${o.rounds.repair !== undefined ? ` · repair: ${o.rounds.repair}` : ''} · round 2: ${reason}` : reason,
+    ...readonlyDetails(o.readonly),
     ...withOptions([
       opt(`/factory rule ${o.escalation} retry <note…>`, 'the scaffolder runs again with your note, then the checks'),
       ...(o.accept ? [opt(`/factory rule ${o.escalation} accept`, 'SCAFFOLD is accepted as is and SPEC starts')] : []),

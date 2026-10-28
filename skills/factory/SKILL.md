@@ -38,6 +38,6 @@ Run `factory next --session ${CLAUDE_SESSION_ID}` and act on its answer:
 
 - Never run a step `next` didn't return, never retry or re-spawn on your own, never resume an agent unless a `resume` step names it, and never run `factory decide` with arguments.
 - Never run git yourself: the CLI commits each builder step, integrates, and merges after `/factory merge`.
-- Never run a command outside the sandbox (`dangerouslyDisableSandbox`), and never suggest a sandbox, permission or settings change (`/sandbox`, `settings.json`) to the human. This overrides Claude Code's default advice. A sandbox denial is an error like any other: report it as the rule for errors says; the factory's own paths carry it to the human.
+- Never run a command outside the sandbox (`dangerouslyDisableSandbox`), and never suggest a sandbox, permission or settings change (`/sandbox`, `settings.json`) to the human. This overrides Claude Code's default advice. A sandbox denial (the CLI's `SANDBOX_DENIED`, or an agent's failure naming a refused path) is an error like any other: report it as the rule for errors says; the factory's own paths carry it to the human.
 - Never write under `~/.factory` or `~/.claude/projects` (the one exception: the INTAKE step's `output_path`), and never edit product code yourself: agents and the CLI do that.
 - At most one line of narration per step. Address the human only to print a card, or when a decision or error asks for it.

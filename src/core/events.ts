@@ -100,7 +100,9 @@ export interface DataByKind {
   run_started: PromptEmbed & { task: string; repo_hash: string; base_sha: string; branch: string; greenfield?: boolean };
   // rebind_fact_id: the hook's session_started{source:'clear'} fact that a /clear rebind adopts (AD-25).
   session_bound: PromptEmbed & { session: string; supersedes?: string; rebind_fact_id?: string };
-  stage_started: { stage: Stage; port?: number; worktree?: string };
+  // 8-1, additive (AD-32): on SCAFFOLD, the tracked files the sandbox refused to check out into the
+  // worktree (read only for the run), sorted. Absent when there are none, and in earlier runs.
+  stage_started: { stage: Stage; port?: number; worktree?: string; readonly_paths?: string[] };
   stage_completed: { stage: Stage; recon?: ReconEmbed };
   step_issued: {
     kind: StepKind; stage: Stage; attempt: number; role?: string; agent?: string; agent_id?: string;

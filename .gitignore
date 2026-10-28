@@ -8,3 +8,6 @@ spikes/.work/
 # Claude Code local state
 .claude/.cc-writes/
 .claude/settings.local.json
+
+# sandbox conformance test fixture (8-1)
+test/.sandbox-tmp/

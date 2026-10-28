@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { NODE_FLOOR } from '../src/core/config.ts';
 import { FactoryError } from '../src/core/errors.ts';
 import type { Args } from '../src/cli/args.ts';
+import { errorOf } from '../src/cli/main.ts';
 import { mergeSettings, settingsWarnings, setup } from '../src/cli/setup.ts';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -226,4 +227,15 @@ test('sh: the timeout kills the whole process group, so a backgrounded grandchil
   const until = Date.now() + 2_000;
   while (alive(pid) && Date.now() < until) await new Promise((res) => setTimeout(res, 20));
   assert.equal(alive(pid), false, `sleep ${pid} is still running`);
+});
+
+test('errorOf (8-1, AD-35): an fs or net EPERM/EACCES is SANDBOX_DENIED naming its path, never BAD_ARGS; a FactoryError is as is; anything else is BAD_ARGS', () => {
+  const errno = (code: string, o: object): Error => Object.assign(new Error(`${code}: x`), { code, ...o });
+  const tail = 'the sandbox refused this; it is a factory defect, report it (AD-35)';
+  assert.deepEqual(errorOf(errno('EPERM', { syscall: 'open', path: '/r/.vscode/settings.json' })), { code: 'SANDBOX_DENIED', message: `open /r/.vscode/settings.json (EPERM): ${tail}` });
+  assert.deepEqual(errorOf(errno('EACCES', { syscall: 'mkdir', path: '/r/.claude/worktrees' })), { code: 'SANDBOX_DENIED', message: `mkdir /r/.claude/worktrees (EACCES): ${tail}` });
+  assert.deepEqual(errorOf(errno('EPERM', { syscall: 'listen', address: '127.0.0.1', port: 4870 })), { code: 'SANDBOX_DENIED', message: `listen 127.0.0.1:4870 (EPERM): ${tail}` });
+  assert.equal(errorOf(errno('ENOENT', { syscall: 'open', path: '/x' })).code, 'BAD_ARGS');
+  assert.equal(errorOf(errno('EPERM', { syscall: 'kill' })).code, 'BAD_ARGS', 'a path-less EPERM (a refused signal) is not blamed on the sandbox');
+  assert.deepEqual(errorOf(new FactoryError('LOCKED', 'busy')), { code: 'LOCKED', message: 'busy' });
 });

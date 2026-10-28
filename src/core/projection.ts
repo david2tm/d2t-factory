@@ -2,6 +2,7 @@
 // I/O and no clock. Deadlines are absolute; only the browser compares them with `now`. The live-only
 // SIGNAL LOST overlay (`live`) is added by the server at serve time and never cached.
 import { budgetOf, openCutAsk, timeboxView } from './budget.ts';
+import { readonlyDetail } from './cards.ts';
 import { HEARTBEAT_INTERVAL_MS, SIGNAL_LOST_MISSED } from './config.ts';
 import type { AnyEvent, ArtifactEmbed, Card, Check, Stage } from './events.ts';
 import { isDecisionKind, TOOL_FACT_KINDS } from './events.ts';
@@ -48,6 +49,8 @@ export interface BoardCard {
   // 7-2: the card's open run_check steps (issued, claimed or reported; not voided), in issue order.
   // Display only: their check droids stand beside the card. Absent when none.
   checks_running?: Check[];
+  // 8-1: the SCAFFOLD plate's detail lines (the run's read-only paths). Absent when there are none.
+  details?: string[];
 }
 
 // files (6-3): at a Gate 1 or Gate 2 card, the ids of the current artifacts its evidence names.
@@ -345,7 +348,10 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
     const st = status(stage);
     if (st === 'pending' && !claimsOf.has(id) && !sealsOf.has(id)) continue;
     const column: Column = st === 'done' ? 'done' : st === 'pending' ? 'backlog' : askedStages.has(stage === 'DESIGN' ? 'SPEC' : stage) ? 'needs_you' : 'in_progress';
-    cards.push({ id, kind: 'stage', label: stage.replace('_', ' '), column, state: s.phase === 'ABANDONED' && stage === current ? 'abandoned' : st, claims: claimsOf.get(id) ?? [], seals: sealsOf.get(id) ?? [], superseded: false, ...running(id) });
+    cards.push({
+      id, kind: 'stage', label: stage.replace('_', ' '), column, state: s.phase === 'ABANDONED' && stage === current ? 'abandoned' : st, claims: claimsOf.get(id) ?? [], seals: sealsOf.get(id) ?? [], superseded: false, ...running(id),
+      ...(stage === 'SCAFFOLD' && s.readonly_paths?.length ? { details: [readonlyDetail(s.readonly_paths)] } : {}),
+    });
   }
   const cutOpen = Boolean(openCutAsk(s));
   const timeboxEnds: string[] = [];
