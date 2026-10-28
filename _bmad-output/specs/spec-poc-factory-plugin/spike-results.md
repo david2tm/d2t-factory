@@ -16,6 +16,7 @@ Spike 06 ran first and returned FAIL — no fallback, which halted the others. T
 | 05 Wake-up | **PASS** |
 | 07 Fact completeness | **PASS** |
 | 08 Playwright MCP isolation (story 3-3) | **PASS** — after giving each server distinct args (see section) |
+| 09 Sandbox protected paths (dry run 3) | **RECORDED** — a cwd-scoped pattern rule; the worktree skips what it refuses (see section) |
 
 ## 06 — Stop and nudge (AD-12)
 
@@ -280,6 +281,26 @@ Consequences for story 3-3:
 - The per-role args must stay distinct.
 - A session whose cwd lies under a directory holding the same `.mcp.json` would shadow the servers. This never happens in a target repo.
 - **Open risk:** the servers run outside the Bash sandbox, and `browser_run_code_unsafe` runs arbitrary Playwright code in the server process. The reviewer charters forbid it, but nothing enforces that.
+
+## 09 — Sandbox protected paths (AD-15, AD-35)
+
+**Verdict: RECORDED** (a reference observation, not a pass/fail spike). It was run on 2026-10-28 during the dry run 3 correct-course (`planning-artifacts/sprint-change-proposal-2026-10-28.md`), in a sandboxed Bash in this repo on Claude Code 2.1.312. It was run by hand, with no runner; the commands are reproduced below. The factory keeps no list of these paths (AD-15). This list is for reference only, and it changes between versions.
+
+- **Refused under the session cwd, at any depth:**
+  - files inside `.vscode/`, `.idea/`, `.claude/commands/`, `.claude/agents/` and `.git/hooks/`;
+  - the files `.gitmodules`, `.mcp.json`, `.gitconfig`, `.bashrc`, `.bash_profile`, `.zshrc`, `.zprofile`, `.profile` and `.ripgreprc`.
+
+  Creating the directories themselves (`mkdir .vscode`) is allowed. (Dry run 3 saw `mkdir .vscode` refused in TodoApp's session; the difference was not chased, and the file writes inside it are refused either way.)
+- **Allowed under the cwd:** `.gitignore`, `.gitattributes`, `.npmrc`, `.env`, `.editorconfig`, `.nvmrc`, `.husky/*`, `.github/*`, `.claude/skills/*`, and `.claude/settings.json` below the top level. This session's own settings also deny the repo's top-level `.claude/settings*.json` by absolute path.
+- **Allowed under `$TMPDIR`** (an `allowWrite` root): every path above. The pattern rule is scoped to the cwd.
+- **Reproduction.** A repo in `$TMPDIR` tracked `.vscode/settings.json`, `.mcp.json`, `.gitmodules`, `.claude/commands/c.md`, `src/a.ts` and `README.md`. `git worktree add <cwd>/sbx-probe-tmp/wt -b plain <base>` failed with `error: unable to create file .mcp.json: Operation not permitted`, then the same for `.vscode/settings.json`, then `fatal: Could not reset index file to revision 'HEAD'`. This is dry run 3 finding 1.
+- **The fix, checked:**
+  1. `git worktree add --no-checkout`, then `git reset -q` and `git checkout-index -a`. `checkout-index` wrote `README.md` and `src/a.ts` and named the four refused files (exit 1).
+  2. `git update-index --skip-worktree` on those files left `git status --porcelain=v2` empty.
+  3. A source edit plus a new file, then `git add -A` and `commit --no-verify`, changed only those two files. `git ls-tree HEAD` still listed the four refused files.
+  4. `git merge --no-ff` of the run branch in the main repo succeeded, and `.vscode/settings.json` was unchanged.
+- **Hazard found.** The target then changed `.vscode/settings.json` and added `src/c.ts`, and `git merge <target>` was run in the worktree. It failed with `unable to create file .vscode/settings.json`, exit 1, no `MERGE_HEAD`, and left `src/c.ts` untracked in the worktree. AD-15 now pre-checks the overlap and requires a failed integration to leave the worktree as it was.
+- Probe directories and the fixture repo were removed afterwards.
 
 ## Node floor
 

@@ -33,3 +33,7 @@ This touches AD-15 (worktree placement and entry) and AD-35 (the sandbox stance)
 ## Not reached
 
 SCAFFOLD onward: SPEC, design, the slice plan, BUILD and reviewers, WRAP and the merge, recording and replay. The five `[dry run 3]` items in `deferred-work.md` are all unverified and carry over to the next dry run: `ExitWorktree` after `/clear` before the merge (high if true), the husky + commitlint merge, linters and test runners crawling the kept worktrees, a real interactive recording as a replay fixture, and the optional spike 02 rerun.
+
+## Decisions (2026-10-28)
+
+`planning-artifacts/sprint-change-proposal-2026-10-28.md`, stories 8-1 and 8-2. Finding 1: the worktree checks out what the sandbox allows, and the refused files are read-only for the run (skip-worktree, named on the cards). `SANDBOX_DENIED` replaces `BAD_ARGS`, `factory start` preflights the sandbox, and a sandbox conformance test runs the CLI's git (spike 09 pinned the 2.1.312 rule and verified the fix). Finding 2: adopted; the line shows when the run is parked, except on the merge card.

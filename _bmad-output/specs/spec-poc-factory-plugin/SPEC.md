@@ -79,7 +79,7 @@ Vision plus opportunity. d2t faces 1.5–2h interview exercises — add a featur
 - Ships as a standalone Claude Code plugin installed user-level; target projects have no BMad.
 - Nothing lands in the target project's working tree: factory tooling ships with the plugin (MCP/npx), the repo's own e2e tooling is preferred when present, factory state, run artifacts, and worktrees live under `~/.factory/<repo-hash>/`; the worktree holds product code only.
 - Factory hooks never alter non-factory sessions.
-- Factory sessions run every command inside the user's sandbox and never ask the human to loosen it; `factory setup` configures the sandbox the factory needs once per machine, except `allowLocalBinding`, which the human sets by hand.
+- Factory sessions run every command inside the user's sandbox and never ask the human to loosen it; `factory setup` configures the sandbox the factory needs once per machine, except `allowLocalBinding`, which the human sets by hand. Tracked files the sandbox refuses to write (e.g. `.vscode/*`, `.mcp.json`) are read-only for the run and named on its cards. `factory start` refuses early, naming the sandbox, when the factory can't work under it.
 - New dependencies in a brownfield repo require the human (escalation condition 2).
 - Every merge requires explicit human OK.
 - Dashboard truth never comes from LLM self-report; no Docker; minimal local process.

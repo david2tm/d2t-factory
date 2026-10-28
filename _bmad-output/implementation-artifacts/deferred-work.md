@@ -13,3 +13,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dry-run-2-worktree-exit-and-removal.md`
   summary: [dry run 3] Check whether Jest, ESLint or `tsc` run in the target's main checkout crawl the kept run worktrees under `<repo>/.claude/worktrees/` and find duplicate modules or tests.
   evidence: Kept worktrees hold installs and copied gitignored files, and `.git/info/exclude` hides them from git only (unverified; settle on a brownfield repo with Jest after two runs). `factory prune` (batch 2) prints the cleanup commands for the human's own terminal.
+- source_spec: `_bmad-output/planning-artifacts/sprint-change-proposal-2026-10-28.md`
+  summary: Integrate a target that changed a sandbox-refused path in the object database (`git merge-tree --write-tree` + `commit-tree`, then check out only the writable paths) instead of asking the human to merge by hand.
+  evidence: 8-1 refuses that integration with a card (AD-15). It is rare in an interview, where the target branch doesn't move during the run. Spike 09 reproduced the failure.
+- source_spec: `_bmad-output/planning-artifacts/sprint-change-proposal-2026-10-28.md`
+  summary: Find out why `mkdir .vscode` was refused in dry run 3's TodoApp session but allowed in spike 09's session (same Claude Code 2.1.312).
+  evidence: Not blocking: file writes inside `.vscode/` are refused in both, and 8-1 skips by result, not by list. It might be a pre-existing-directory or settings difference.

@@ -183,3 +183,24 @@
     Governing decisions: AD-23 (checks_running is projection-only), AD-32 (no event change). Visual
     rules: DESIGN.md Character roster, Check droids. Source: sprint-change-proposal-2026-10-26.md
     sections 4.2, 4.3.
+
+- id: "8-1"
+  title: The worktree checks out what the sandbox allows; the sandbox is tested
+  description: >-
+    Worktree creation via --no-checkout + checkout-index + skip-worktree with readonly_paths on the
+    SCAFFOLD and gate-1 cards; integration refused when the target changed a read-only path and
+    clean on any failure; branch clean-up on a failed add; SANDBOX_DENIED; the factory start
+    preflight; the sandbox conformance test; README (dry run 3 finding 1; CAP-4, CAP-12, AD-35).
+  invoke_dev_with: >-
+    Governing decisions: AD-8, AD-15, AD-32 (additive fields), AD-35. Spike 09 in spike-results.md
+    has the reproduction. Source: planning-artifacts/sprint-change-proposal-2026-10-28.md
+    sections 4.1, 4.2.
+
+- id: "8-2"
+  title: Cards say when /clear is safe
+  description: >-
+    clear_safe on a card when the run is parked and the card is not the merge card; one line in
+    cardLines and the Needs You card (dry run 3 finding 2; CAP-1).
+  invoke_dev_with: >-
+    Governing decisions: AD-12 (isParked), AD-34. Source:
+    planning-artifacts/sprint-change-proposal-2026-10-28.md section 4.3.

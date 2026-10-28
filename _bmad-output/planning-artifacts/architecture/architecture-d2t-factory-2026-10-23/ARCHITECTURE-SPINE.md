@@ -7,7 +7,7 @@ paradigm: 'event sourcing + CQRS-lite, LLM as untrusted client (functional core,
 scope: 'd2t-factory Claude Code plugin: conductor skill, agents, hooks, factory CLI state machine, dashboard, replay'
 status: final
 created: '2026-10-23'
-updated: '2026-10-24'
+updated: '2026-10-28'
 binds: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-6, CAP-7, CAP-8, CAP-9, CAP-10, CAP-11, CAP-12, CAP-13, CAP-14, CAP-15, CAP-16]
 sources:
   - ../../../specs/spec-poc-factory-plugin/SPEC.md
@@ -285,7 +285,8 @@ flowchart BT
 - **Binds:** CAP-12
 - **Prevents:** Worktrees inside the target repo, and a global hook that hijacks every session's worktrees.
 - **Rule:**
-  - **Creating it.** The CLI runs `git worktree add <repo>/.claude/worktrees/factory-<run-id> -b factory/<run-id> <base_sha>`. It ensures `.claude/worktrees/` is listed in the untracked `.git/info/exclude`, and copies the gitignored files the run contract names. Only `paths.ts` resolves the location.
+  - **Creating it.** The CLI runs `git worktree add --no-checkout <repo>/.claude/worktrees/factory-<run-id> -b factory/<run-id> <base_sha>`, then `git reset -q` (index only) and `git checkout-index -a` in the worktree, so that every file the sandbox allows is written. Every tracked file still missing on disk (`git ls-files --deleted`) is marked `skip-worktree` and recorded as `stage_started.readonly_paths` (dry run 3, spike 09). It ensures `.claude/worktrees/` is listed in the untracked `.git/info/exclude`, and copies the gitignored files the run contract names. If the add fails after it created the branch, the CLI deletes that branch. Only `paths.ts` resolves the location.
+  - **Paths the sandbox refuses are read-only for the run.** The factory keeps no list of them: the checkout finds them on the installed Claude Code. `git status` stays clean. `git add -A` honours skip-worktree, so commits never change these files, and the final merge never writes them. The SCAFFOLD and gate-1 cards list them as a detail. Agents read them from the main checkout. A change to one fails on the sandbox denial (AD-35). Before WRAP integrates the target, the CLI checks `git diff --name-only <base>..<target>` against `readonly_paths`. If they overlap, it doesn't integrate, and the card without the merge says so and asks the human to merge by hand or abandon. A failed integration of any kind leaves the worktree as it was.
   - **Entering it.** The `enter_worktree` step is issued only when the calling CLI's `realpath(cwd)` is outside the run's worktree. The conductor then calls `EnterWorktree` with `path`. The session's cwd survives `/clear`, so this happens once per session.
   - **Leaving it.** After `merge_approved`, before the merge (AD-8), `exit_worktree` is issued while the calling CLI's cwd is inside the worktree; the conductor calls `ExitWorktree` (keep). The worktree is kept after `merged`: the sandbox keeps an entered worktree's `.git` file and `commondir` read-only for that session (and `commondir` for later sessions), so the CLI never removes it. If `ExitWorktree` is a no-op (e.g. after `/clear`), `done` from inside refuses and reissues the step, and its message tells the human to start `claude` in the main checkout and type `/factory resume <run_id>`; that session's cwd verifies the step and the merge follows. The reissued step lets the turn end (AD-12). Runs merged by an older CLI got `exit_worktree` after `merged`; that path stays.
   - **Why not `~/.factory` (spike 01).** `EnterWorktree` on a path outside `.claude/worktrees/` prompts every time, whatever the allow rules say, and can't enter a second such worktree from inside one. The in-repo placement entered with zero prompts, both fresh and after `/clear`, and left `git status` clean.
@@ -559,6 +560,7 @@ flowchart BT
     - `type` is one of `intake`, `gate_1`, `gate_2`, `cut`, `merge`, `escalation` (with `condition` 1–4), `design_choice`, `scaffold_failure` or `resume_select`.
     - `commands` are the exact `/factory …` decisions that are legal for that card.
     - The `intake` card shows `task` and `scope` as `details`, then `limit_min` (or `no time limit`), `slice_timebox_min`, `ui_free` and `reviewer_overrides` from the intake output.
+    - **`clear_safe`** (dry run 3). It is set when the run is parked (AD-12) and the card is not `merge`. The merge card stays excluded until `ExitWorktree` after `/clear` is settled. The card's lines then end with "Safe to `/clear` here: the run is saved. After clearing, type one of the commands above." It is additive, so older cards have no line.
   - **The event.** `ask_raised` records the card in `data.card`.
   - **Where it's used.** `next` embeds it, and the dashboard projection uses the same function.
   - **The conductor** prints it verbatim as the last lines of any turn that ends on `ask_human`, in the order title, reason, details, `To continue, type one of:`, each `command — then`, reply. It addresses the human only inside `ask_human` steps or INTAKE.
@@ -574,6 +576,17 @@ flowchart BT
     - merges `~/.factory` into `permissions.additionalDirectories`, the allow rules, the sandbox `allowWrite`, and an `EnterWorktree` allow rule in `~/.claude/settings.json`. No rule is added for the final git merge: the CLI runs it after the conductor left the worktree, from the main checkout, which is then the session's cwd (AD-8, dry run 2);
     - runs `agent-browser install`.
   - **The sandbox is never bypassed.** In a factory-bound session neither the conductor nor an agent runs a command with `dangerouslyDisableSandbox`, and neither suggests a sandbox, permission or settings change to the human. A sandbox denial is an ordinary failure on the path that hit it (a failed check, an agent failure or escalation, a CLI error). A step that needs more than the sandbox allows is a factory defect, fixed in setup, in the order of steps, or in the README (dry run 2).
+  - **The sandbox is a designed dependency (dry run 3).** Its write rules change between Claude Code versions. Spike 09 found a pattern rule scoped to the session's cwd that refuses, for example, `.vscode/*`, `.mcp.json` and `.gitmodules` at any depth. So:
+    - **Errors name it.** A git or filesystem `EPERM`/`EACCES` in the CLI is `SANDBOX_DENIED`, naming the path, never `BAD_ARGS`.
+    - **`factory start` preflights it.** The CLI process runs in the session's sandbox. Before `run_started`, `start` probes:
+      - creating and removing a file under `<repo>/.claude/worktrees/`;
+      - opening `.git/info/exclude` for append;
+      - writing under `~/.factory/<repo-hash>/`;
+      - with the sandbox enabled, binding `127.0.0.1:0`.
+
+      A failed probe refuses with `SANDBOX_DENIED`.
+    - **Refused paths are learned, not listed** (AD-15).
+    - **A test runs it.** `test/sandbox.test.ts` runs the CLI's worktree, commit, integration, merge and preflight functions on a plumbing-built fixture whose worktree sits under the session cwd. It reports whether it ran sandboxed. After a Claude Code upgrade, `npm test` runs once from a sandboxed Claude Code session before the next dry run. The cwd-inside-worktree case stays covered by AD-15's order of steps and by dry runs.
   - **Refusals.** `factory start` refuses with `SETUP_REQUIRED` until setup has run, and also while `plugin-env.json` is missing, with the message "restart the session".
 ## Consistency Conventions
 
@@ -584,7 +597,7 @@ flowchart BT
 | Models | Set in agent frontmatter with aliases. `opus`: `spec-writer`, `builder`, `slicer`. `sonnet`: `recon`, `framer`, `scaffolder`, `designer`, all reviewers |
 | Decision grammar (`src/core/decision.ts`) | `approve intake\|gate1\|gate2` · `rework gate1\|gate2\|S<n> <note…>` · `cut S<n>[,S<n>…]` · `keep` · `rule E<n> <choice…>` · `choose a\|b` · `merge` · `rerun <stage>` · `abandon [run-id]`. Non-decisions: `resume [run-id]`, bare `/factory`, and task text. The first token is a subcommand only on an exact match with valid arity. Otherwise the text is a task |
 | CLI verbs | `setup`, `start <task>`, `resume [run-id]`, `status`, `next [--wait ms]`, `claim`, `done <step> [--note\|--stdin]`, `decide`, `check <step>`, `devserver up\|down`, `record <name> [--runs]`, `dashboard`, `hook <event>`. Every call carries `--session` |
-| CLI I/O | JSON on stdout. Failures exit non-zero with `{error:{code,message}}`. Codes: `ILLEGAL_TRANSITION`, `MISSING_EVIDENCE`, `NO_HUMAN_PROMPT`, `LOCKED`, `NOT_HOLDER`, `CLAIM_TAKEN`, `CHECK_FAILED`, `BAD_ARGS`, `NOT_FOUND`, `SETUP_REQUIRED`, `SETUP_FAILED`, `NODE_VERSION`, `REFUSED_EXCLUSIVE`. `start` and `resume` return `dashboard_url` |
+| CLI I/O | JSON on stdout. Failures exit non-zero with `{error:{code,message}}`. Codes: `ILLEGAL_TRANSITION`, `MISSING_EVIDENCE`, `NO_HUMAN_PROMPT`, `LOCKED`, `NOT_HOLDER`, `CLAIM_TAKEN`, `CHECK_FAILED`, `BAD_ARGS`, `NOT_FOUND`, `SETUP_REQUIRED`, `SETUP_FAILED`, `NODE_VERSION`, `REFUSED_EXCLUSIVE`, `SANDBOX_DENIED`. `start` and `resume` return `dashboard_url` |
 | IDs | ULID for events and steps. `<slug>-<base32×4>` for runs. Slices `S1, S2…`, acceptance criteria `AC-1, AC-2…`, escalations `E1, E2…`, each per run |
 | Times | ISO-8601 UTC with ms in events; durations in ms |
 | TypeScript | Erasable syntax only: no `enum`, `namespace`, parameter properties or decorators. Relative imports end in `.ts`, and types use `import type`. Use `#` subpath imports, not `paths`. tsconfig: `module: nodenext`, `noEmit`, `erasableSyntaxOnly`, `verbatimModuleSyntax`, `allowImportingTsExtensions`. The plugin never sits under `node_modules` |
@@ -767,6 +780,7 @@ These were the spikes for increment 0. Each one has a default to build on, a pas
 | Wake-up | Pass |
 | Stop and nudge | Stop blocking passes; resume after `/clear` amended (AD-12, AD-25). Dry run 1: blocking after a human rejection fought the human until Claude Code's cap (8 continuations, then an override); amended with the rejection exit and `STOP_BLOCK_MAX` (AD-12) |
 | Fact completeness | Pass |
+| Sandbox protected paths (09, dry run 3) | Pattern rule scoped to the cwd; the worktree skips what it refuses (AD-15, AD-35) |
 
 | Spike | Build on | Passes when | Fallback |
 | --- | --- | --- | --- |
