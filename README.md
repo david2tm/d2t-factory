@@ -2,7 +2,17 @@
 
 A software factory for Claude Code. `/factory <task>` drives a run through INTAKE → RECON/FRAME → SCAFFOLD → SPEC (+ design) → SLICE PLAN → BUILD → WRAP. The `factory` CLI owns sequencing, hooks record what actually happened, and every gate and merge waits for a command the human typed. A local dashboard shows each run as a lane, marking claims as verified or not.
 
-The contract lives in `_bmad-output/specs/spec-poc-factory-plugin/SPEC.md`. Open issues from the first dry run: `_bmad-output/implementation-artifacts/dry-run-findings.md`.
+The contract lives in `_bmad-output/specs/spec-poc-factory-plugin/SPEC.md`. Dry-run findings: `_bmad-output/implementation-artifacts/dry-run-findings.md` (run 1) and `dry-run-{2,3,4}-findings.md`. Dry run 4 was the first run to go end to end, from intake to the merge.
+
+## Install
+
+The factory is a Claude Code plugin loaded per session with `--plugin-dir`. Nothing is installed through a marketplace. Clone it:
+
+```sh
+git clone https://github.com/david2tm/d2t-factory.git ~/Projects/d2t-factory
+```
+
+The commands below assume `~/Projects/d2t-factory`. If you clone it somewhere else, use that path instead. There are no npm dependencies: no `npm install`, and no root `package.json`. Then follow the five steps below, once per machine.
 
 ## Before the first run (once per machine)
 
@@ -11,9 +21,10 @@ The contract lives in `_bmad-output/specs/spec-poc-factory-plugin/SPEC.md`. Open
 | Tool | Why |
 |---|---|
 | macOS, git | the factory makes a git worktree per run |
-| Node ≥ 22.18 | the CLI and hooks use type stripping and `node:sqlite` |
-| Claude Code | the conductor; any version with plugins, `EnterWorktree` and background agents |
+| Node ≥ 22.18 (`brew install node`) | the CLI and hooks use type stripping and `node:sqlite` |
+| Claude Code | the conductor; any version with plugins, `EnterWorktree` and background agents. Dry runs 3 and 4 used 2.1.312 |
 | `npx` + Google Chrome | the UI reviewers' Playwright MCP servers (`.mcp.json`) start through `npx` and drive Chrome headless |
+| tmux (`brew install tmux`) | only for the spikes in `spikes/`, which drive `claude` through `/opt/homebrew/bin/tmux`. Runs don't need it |
 
 ### 2. Check the plugin itself
 
@@ -89,7 +100,7 @@ Each run already gets its own git worktree, branch (`factory/<run-id>`) and port
 
 ## Optional: Ghostty + tmux
 
-They make it easier to keep the conductor, a shell in the worktree and the dashboard side by side, and to run two sessions for parallel runs.
+Neither is needed to run the factory: any terminal works. They make it easier to keep the conductor, a shell in the worktree and the dashboard side by side, and to run two sessions for parallel runs.
 
 ```sh
 brew install --cask ghostty
@@ -99,6 +110,10 @@ brew install tmux
 - Ghostty has native splits: `cmd+d` splits right, `cmd+shift+d` splits down.
 - A tmux session survives closing the terminal: `tmux new -s factory`, detach with `ctrl-b d`, return with `tmux attach -t factory`.
 - Claude Code's own `claude --worktree --tmux` opens a session in a new worktree inside tmux. It's handy for side work in this repo, but not for factory runs (see above).
+
+## Known issues
+
+- **The dev server asks you to kill it** (dry run 4, finding 1). Under the sandbox, the CLI can't signal a dev server that an earlier command started. So at every BUILD slice after the first, and at WRAP, the health check stops and asks you to run `kill -TERM -<pid>` in your own terminal, then tell the conductor to continue (it runs `factory next`). Check the pid first with `ps -o pid,command -p <pid>`, as the message says.
 
 ## Reset after a run
 
