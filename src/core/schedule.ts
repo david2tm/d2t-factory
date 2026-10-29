@@ -261,7 +261,7 @@ function merged(s: RunState, ctx: ScheduleCtx): DueStep[] {
 }
 
 // The ask_human step that carries an open ask: an escalation's by its id, the cut card by its type.
-const carries = (st: Step, ask: Ask): boolean => st.kind === 'ask_human' && (ask.escalation ? st.card?.escalation === ask.escalation : st.card?.type === ask.card.type);
+export const carries = (st: Step, ask: Ask): boolean => st.kind === 'ask_human' && (ask.escalation ? st.card?.escalation === ask.escalation : st.card?.type === ask.card.type);
 
 export function due(state: RunState, ctx: ScheduleCtx = NO_CTX): DueStep[] {
   if (isTerminal(state)) return [];

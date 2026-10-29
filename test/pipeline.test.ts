@@ -12,11 +12,13 @@ import { spawn, spawnSync } from 'node:child_process';
 import { briefText } from '../src/cli/brief.ts';
 import { contractDiff, logTail } from '../src/cli/next.ts';
 import { attemptsInChain } from '../src/cli/steps.ts';
+import { CLEAR_SAFE_LINE } from '../src/core/cards.ts';
 import { WAIT_MAX_MS } from '../src/core/config.ts';
 import { validateEvent } from '../src/core/events.ts';
 import { projectRun } from '../src/core/projection.ts';
 import { fold } from '../src/core/reducer.ts';
 import { mayStop } from '../src/core/stop.ts';
+import { isParked } from '../src/core/verify.ts';
 import {
   agentStops, agentWrites, approveOut, BIN as BIN_PATH, builderOut, commands, consumed, contract, decide, designOut, fails, findingsOut, frameOut, git, ok, questionBlock, reconOut, recordIntake, run, runDir, say,
   scaffoldOut, SECRET, serveBoard, slicerOut, specOut, world, writeApp, type World, type PlanSlice,
@@ -87,6 +89,9 @@ function conductor(w: World, s: string) {
 
 const byKind = (kind: string, agent?: string) => (st: any): boolean => st.kind === kind && (!agent || st.agent === `d2t-factory:${agent}`);
 const card = (type: string) => (st: any): boolean => st.kind === 'ask_human' && st.card?.type === type;
+// 8-2: the Needs You card with this ask id on the board now.
+const needsCard = (w: World, id: string, askId: string): any =>
+  projectRun({ state: fold(commands(w, id)), commands: commands(w, id), facts: [], skipped: [] }, { repo_hash: 'h', run_id: id }).needs_you.find((x) => x.ask_id === askId)!.card;
 const stateOf = (w: World, id: string) => fold(commands(w, id));
 const portOf = (w: World, id: string): number => commands(w, id).find((e) => e.kind === 'stage_started').data.port;
 const last = (w: World, id: string, kind: string): any => commands(w, id).filter((e) => e.kind === kind).at(-1);
@@ -176,6 +181,15 @@ test('acceptance: the whole front half through bin/factory ends in BUILD with S1
   assert.ok(g1.card.reason.includes(sw1.output_path));
   assert.equal('details' in g1.card, false, '8-1: no read-only detail line');
   assert.ok(!g1.card_text.includes('Read-only in this run'), g1.card_text);
+  // 8-2: parked at gate 1: the card is stored with clear_safe; chat and board end with the clear line.
+  assert.equal(g1.card.clear_safe, true);
+  assert.ok(g1.card_text.endsWith(`\nAsk questions in chat; to change the spec, use rework.\n${CLEAR_SAFE_LINE}`), g1.card_text);
+  assert.equal(commands(w, id).find((e) => e.id === g1.step_id).data.card.clear_safe, true);
+  assert.equal(needsCard(w, id, g1.step_id).clear_safe, true);
+  // status shows the same card and card_text as next.
+  const sg1 = ok(run(w, ['status', '--session', s])).open_steps.find((x: any) => x.step_id === g1.step_id);
+  assert.equal(sg1.card.clear_safe, true);
+  assert.ok(sg1.card_text.endsWith(`\n${CLEAR_SAFE_LINE}`), sg1.card_text);
 
   // rework gate1 → a fresh spec-writer with the note and the prior spec → spec.lint → gate 1 again.
   const rw1 = ok(decide(w, s, 'rework gate1 make the footer grey', { cwd: c.cwd }));
@@ -1574,7 +1588,11 @@ test('acceptance (3-1): intake started 2 h ago with limit_min 100; at BUILD with
     title: 'Cut point reached — 3 slices unbuilt. Cut S1, S2, S3?', commands: ['/factory cut S1,S2,S3', '/factory keep'],
   });
   const raised = last(w, id, 'ask_raised');
-  assert.deepEqual(raised.data.card, cut.card);
+  // 8-2: only the step's card carries clear_safe (parked, the sole card, no deadline ahead: the cut
+  // point is behind and no slice is live); the ask's card does not.
+  assert.equal('clear_safe' in raised.data.card, false);
+  assert.equal(cut.card.clear_safe, true);
+  assert.deepEqual({ ...raised.data.card, clear_safe: true }, cut.card);
   assert.equal(commands(w, id).some((e) => e.kind === 'slice_started'), false);
   c.claim(cut.step_id);
   assert.deepEqual(c.next().steps, [], 'no slice starts while the cut card is open');
@@ -1637,6 +1655,9 @@ test('no time limit (6-2): gate 2 names no cut point; BUILD with Backlog slices 
   assert.equal('limit_min' in last(w, id, 'intake_confirmed').data.intake, false);
   assert.equal(gate2.card.options[0].then, 'BUILD starts with the first slice; the next stop is the merge, unless an escalation comes first');
   assert.match(gate2.card_text, /^Gate 2 — approve the slice plan\n[\s\S]*\nTo continue, type one of:\n {2}\/factory approve gate2 — BUILD starts/);
+  // 8-2: parked at gate 2: chat and board carry the clear line.
+  assert.ok(gate2.card_text.endsWith(`\n${CLEAR_SAFE_LINE}`), gate2.card_text);
+  assert.equal(needsCard(w, id, gate2.step_id).clear_safe, true);
   ok(decide(w, s, 'approve gate2', { cwd: wt }));
   // A limit of 30 would have raised the cut card here (the keep test above): none without a limit.
   const b1 = c.take(byKind('spawn', 'builder'));
@@ -2273,6 +2294,12 @@ test('acceptance (3-4): S1, S2 independent and S3 ← S2; S1\'s FINDINGS during 
   // git.deps diffed each slice's own commits: no dependency changed.
   assert.deepEqual(commands(w, id).filter((e) => e.kind === 'check_ran' && e.data.check === 'git.deps').map((e) => e.data.exit_code), [0, 0, 0]);
   const m = c.take(card('merge'));
+  // 8-2: the merge card never carries the clear line, though the run is parked at it.
+  assert.equal(isParked(fold(commands(w, id))), true);
+  assert.equal('clear_safe' in m.card, false);
+  assert.ok(!m.card_text.includes('/clear'), m.card_text);
+  assert.equal('clear_safe' in commands(w, id).find((e) => e.id === m.step_id).data.card, false);
+  assert.equal('clear_safe' in needsCard(w, id, m.step_id), false);
   assert.match(m.card.reason, /^S1 Footer markup · reviewer-code APPROVE · 1 round · S2 Footer text · reviewer-code APPROVE · 0 rounds · S3 Footer link · reviewer-code APPROVE · 0 rounds · /);
   assert.deepEqual(m.card.commands, ['/factory merge', '/factory rework S1 <note…>', '/factory rework S2 <note…>', '/factory rework S3 <note…>', '/factory abandon']);
   for (const e of commands(w, id)) assert.ok(validateEvent(e).ok, JSON.stringify(e));
@@ -2302,6 +2329,11 @@ test('time box (3-4): a slice over its box raises `Over time box: S1 at 31 / 30 
     title: 'Over time box (S1)', label: 'Over time box', reason: 'S1 at 31 / 30 min.', commands: ['/factory rule E1 retry <note…>', '/factory rule E1 cut', '/factory abandon'], condition: 3,
   });
   assert.deepEqual([S('S1').state, stateOf(w, id).steps[rv1.step_id].state], ['ESCALATED', 'claimed']);
+  // 8-2: raised while S2's builder and S1's reviewer are claimed: not parked, so no clear line in chat or on the board.
+  assert.equal('clear_safe' in tb.card, false);
+  assert.ok(!tb.card_text.includes('/clear'), tb.card_text);
+  const e1 = last(w, id, 'ask_raised');
+  assert.equal('clear_safe' in needsCard(w, id, e1.id), false);
   fails(decide(w, s, 'rule E1 accept', { cwd: wt }), 'ILLEGAL_TRANSITION', /retry <note…> or cut/);
   const sha1 = stateOf(w, id).steps[b1.step_id].sha!;
   // A second escalation on the ESCALATED slice: the in-flight reviewer escalates; its ask carries no slice.
@@ -2311,6 +2343,7 @@ test('time box (3-4): a slice over its box raises `Over time box: S1 at 31 / 30 
   assert.deepEqual(stateOf(w, id).rejected, []);
   const card2 = c.next().steps.find((x: any) => x.card?.escalation === 'E2');
   assert.ok(card2, 'the E2 card is due');
+  assert.equal('clear_safe' in card2.card, false, '8-2: S2\'s builder still works');
   // cut: S1 to CUT, its open reviewer cancelled (which closes E2 and cancels its card), the role
   // free; the budget cut is not decided.
   ok(decide(w, s, 'rule E1 cut', { cwd: wt }));
@@ -2343,6 +2376,75 @@ test('time box (3-4): a slice over its box raises `Over time box: S1 at 31 / 30 
   assert.equal(lane.deadlines.timebox_ends_at, s2.timebox_ends_at);
   for (const e of commands(w, id)) assert.ok(validateEvent(e).ok, JSON.stringify(e));
   assert.deepEqual(stateOf(w, id).rejected, []);
+  ok(decide(w, s, 'abandon', { cwd: wt }));
+});
+
+// 8-2: the open ask_human steps as `status` shows them.
+const statusCards = (w: World, s: string): any[] => ok(run(w, ['status', '--session', s])).open_steps.filter((x: any) => x.kind === 'ask_human');
+
+test('clear_safe (8-2): one next issues the Over time box card and S1\'s builder round: the card is stored without the flag, and next, status and the board show no line', (t) => {
+  const w = world();
+  const s = 'sa';
+  const r = toGate2(w, s, t, NO_SERVER, {}, [{ id: 'S1', title: 'Footer markup', acs: ['AC-1'] }, { id: 'S2', title: 'Footer text', acs: ['AC-2'] }]);
+  const { id, c, wt } = r;
+  ok(decide(w, s, 'approve gate2', { cwd: wt }));
+  const b1 = c.take(byKind('spawn', 'builder'));
+  ok(builds(r, b1, { 's1.js': '1\n' }, 'ag-b1'));
+  assert.deepEqual(c.checks().map((x) => [x.name, x.passed]), [['contract.test', true]]);
+  const [rv1, b2] = c.next().steps;
+  assert.deepEqual([roleOf(rv1), roleOf(b2), b2.slice], ['reviewer-code', 'builder', 'S2']);
+  c.claim(rv1.step_id);
+  c.claim(b2.step_id);
+  ok(c.agent(rv1, findingsOut('The footer markup is not closed'), 'ag-rv1'));
+  ok(builds(r, b2, { 's2.js': '1\n' }, 'ag-b2'));
+  // S2 over its box as the builder comes free: one next raises S2's card and issues S1's builder round.
+  backdate(w, id, (e) => e.kind === 'slice_started' && e.data.slice === 'S2', 31 * 60_000);
+  const n = c.next();
+  assert.deepEqual(n.steps.map((x: any) => [x.kind, x.card?.type ?? roleOf(x), x.slice ?? null]), [['ask_human', 'escalation', null], ['resume', 'builder', 'S1']]);
+  const tb = n.steps[0];
+  assert.equal(tb.card.title, 'Over time box (S2)');
+  assert.equal('clear_safe' in commands(w, id).find((e) => e.id === tb.step_id).data.card, false, 'not stored');
+  assert.equal('clear_safe' in tb.card, false);
+  assert.ok(!tb.card_text.includes('/clear'), tb.card_text);
+  const st = statusCards(w, s).find((x) => x.step_id === tb.step_id);
+  assert.equal('clear_safe' in st.card, false);
+  assert.ok(!st.card_text.includes('/clear'), st.card_text);
+  assert.equal('clear_safe' in needsCard(w, id, last(w, id, 'ask_raised').id), false);
+  ok(decide(w, s, 'abandon', { cwd: wt }));
+});
+
+test('clear_safe (8-2): parked at a BUILD escalation with the cut point ahead, the card is stored without the flag (next hands back a wait); the cut card raised beside it is not the sole card, so neither shows a line', (t) => {
+  const w = world();
+  const s = 'sa';
+  const r = toGate2(w, s, t, NO_SERVER, {}, [{ id: 'S1', title: 'One', acs: ['AC-1'] }, { id: 'S2', title: 'Two', acs: ['AC-2'], depends_on: ['S1'] }]);
+  const { id, c, wt } = r;
+  ok(decide(w, s, 'approve gate2', { cwd: wt }));
+  // Three unparseable builder outputs on S1: Non-convergence E1, S2 still in Backlog behind it.
+  for (const attempt of [1, 2, 3]) {
+    const b = c.take(byKind('spawn', 'builder'));
+    writeFileSync(b.output_path, 'done\n');
+    fails(c.done(b.step_id), 'MISSING_EVIDENCE', attempt === 3 ? /raised E1/ : /reissued as step/);
+  }
+  const e1 = c.take(card('escalation'));
+  const st1 = stateOf(w, id);
+  assert.deepEqual([isParked(st1), st1.slices.S1.state, st1.slices.S2.state], [true, 'ESCALATED', 'BACKLOG']);
+  assert.equal('clear_safe' in commands(w, id).find((e) => e.id === e1.step_id).data.card, false, 'the cut point is ahead');
+  assert.ok(!e1.card_text.includes('/clear'), e1.card_text);
+  assert.ok(c.next().wait, 'only cards open, yet next hands the conductor a wait until the cut point');
+  // Move the clock start 2 h back: the cut point is behind, and next raises the cut card beside E1.
+  const file = join(runDir(w, id), 'commands.jsonl');
+  const twoHoursBack = (iso: string): string => new Date(Date.parse(iso) - 2 * 3_600_000).toISOString();
+  writeFileSync(file, readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => {
+    const e = JSON.parse(l);
+    return JSON.stringify(e.kind === 'intake_confirmed' ? { ...e, data: { ...e.data, clock_start: twoHoursBack(e.data.clock_start) } } : e);
+  }).join('\n') + '\n');
+  const cut = c.take(card('cut'));
+  assert.ok(isParked(stateOf(w, id)));
+  assert.equal('clear_safe' in commands(w, id).find((e) => e.id === cut.step_id).data.card, false, 'E1 is open too');
+  assert.ok(!cut.card_text.includes('/clear'), cut.card_text);
+  assert.deepEqual(statusCards(w, s).map((x) => ['clear_safe' in x.card, x.card_text.includes('/clear')]), [[false, false], [false, false]]);
+  const asks = commands(w, id).filter((e) => e.kind === 'ask_raised');
+  assert.deepEqual(asks.map((a) => 'clear_safe' in needsCard(w, id, a.id)), [false, false]);
   ok(decide(w, s, 'abandon', { cwd: wt }));
 });
 

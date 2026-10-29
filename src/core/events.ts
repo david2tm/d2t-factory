@@ -54,6 +54,9 @@ export interface Card {
   // New dependency card carries the builder sha it is about.
   sha?: string;
   target?: string | null;
+  // 8-2 (AD-34), additive: `next` stores true on an ask_human card it issues into a parked run (not
+  // the merge card); views show the clear line only while the run is still parked.
+  clear_safe?: boolean;
 }
 
 // One reviewer finding (AD-11), as parsed from a ```finding block.

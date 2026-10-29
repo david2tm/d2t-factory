@@ -399,11 +399,17 @@ export function elapsedClock(b: BudgetView | null, now: number): { value: string
 
 // --- Action slot (6-2) ---------------------------------------------------------------------------
 
+// 8-2: a mirror of src/core/cards.ts CLEAR_SAFE_LINE (the web never imports core); test/web-model
+// checks the two are equal.
+export const CLEAR_SAFE_LINE = 'Safe to `/clear` here: the run is saved. After clearing, type one of the commands above.';
+
 // The Action slot's rows: each option (command and its then line) and the card's reply. A card
-// recorded before 6-2 has only commands: those rows have no then, and there is no reply.
-export function actionRows(card: Pick<Card, 'commands' | 'options' | 'reply'>): { rows: CardOption[]; reply?: string } {
-  if (!card.options) return { rows: card.commands.map((command) => ({ command, then: '' })) };
-  return { rows: card.options, ...(card.reply ? { reply: card.reply } : {}) };
+// recorded before 6-2 has only commands: those rows have no then, and there is no reply. 8-2: a card
+// with clear_safe closes with the clear line, after the reply, in either shape.
+export function actionRows(card: Pick<Card, 'commands' | 'options' | 'reply' | 'clear_safe'>): { rows: CardOption[]; reply?: string; clear?: string } {
+  const clear = card.clear_safe ? { clear: CLEAR_SAFE_LINE } : {};
+  if (!card.options) return { rows: card.commands.map((command) => ({ command, then: '' })), ...clear };
+  return { rows: card.options, ...(card.reply ? { reply: card.reply } : {}), ...clear };
 }
 
 // --- Artifacts (6-3) -----------------------------------------------------------------------------

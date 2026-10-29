@@ -15,7 +15,7 @@ import { redact, redactString } from '../core/redact.ts';
 import { isTerminal, openSteps, type RunState, type Step } from '../core/reducer.ts';
 import { due, mergeCardCurrent, type ScheduleCtx, type WrapProbe } from '../core/schedule.ts';
 import {
-  activeScaffoldRepair, approvedMerge, askOpenFor, checkById, claimOverlay, classifyOrphan, closeEvidence, isIntakeChat, isVerified, isVoided, latestByRole, latestCheckStep, latestStep, liveSlices,
+  activeScaffoldRepair, approvedMerge, askOpenFor, checkById, claimOverlay, classifyOrphan, closeEvidence, isIntakeChat, isParked, isVerified, isVoided, latestByRole, latestCheckStep, latestStep, liveSlices,
   mergePending, nextBacklog, openMergeCard, roundFailure, roundOf, scaffoldRepairs, scaffoldRuled, sliceDeps, wrapBaseline, wrapCheck,
 } from '../core/verify.ts';
 import { ulid } from '../store/ids.ts';
@@ -552,9 +552,15 @@ async function prepare(c: Ctx, run: LoadedRun, ctx: ScheduleCtx, cwd: string): P
   return { events: [] };
 }
 
-// Under the lock: append step_issued for each due step, with its brief and output path.
+// Under the lock: append step_issued for each due step, with its brief and output path. 8-2
+// (AD-34): an ask_human card the batch issues (with commands, not the merge card) is stored with
+// clear_safe only when, after the whole batch, the run is parked, no deadline is ahead (so `next`
+// will not hand the conductor a `--wait` that /clear would kill) and it is the only open ask_human
+// step with commands (so no ruling on a sibling card can restart work under a line already printed).
+// Judged after the batch, so a spawn issued alongside a card keeps the flag off.
 function issueDue(c: Ctx, run: LoadedRun, state: RunState, ctx: ScheduleCtx): RunState {
   let s = state;
+  const events: AnyEvent[] = [];
   for (const d of due(s, ctx)) {
     const id = ulid(); // step_id = this event's id
     const data = { ...d };
@@ -567,9 +573,24 @@ function issueDue(c: Ctx, run: LoadedRun, state: RunState, ctx: ScheduleCtx): Ru
     if (intakeChat) data.brief_path = writeIntakeBrief(c.hash, c.runId, s, { id, output_path: data.output_path! });
     const e = makeEvent(c.runId, 'step_issued', data, { id, corr: id });
     s = gateOrThrow(s, [e]);
-    appendAll(c.hash, c.runId, [e]);
+    events.push(e);
   }
-  return s;
+  if (!events.length) return s;
+  const soleCard = openSteps(s).filter((st) => st.kind === 'ask_human' && st.card?.commands.length).length === 1;
+  const safe = isParked(s) && soleCard && !waitDeadlines(s, run.commands, Date.now()).ahead.length;
+  const final = safe ? events.map(withClearSafe) : events;
+  const out = gateOrThrow(state, final);
+  appendAll(c.hash, c.runId, final);
+  return out;
+}
+
+// A step_issued event with clear_safe on its card, when the card qualifies (8-2): an ask_human card
+// with commands that is not the merge card (the INTAKE conversation card has none).
+function withClearSafe(e: AnyEvent): AnyEvent {
+  if (e.kind !== 'step_issued') return e;
+  const d = (e as Envelope<'step_issued'>).data;
+  if (d.kind !== 'ask_human' || !d.card || d.card.type === 'merge' || !d.card.commands.length) return e;
+  return { ...e, data: { ...d, card: { ...d.card, clear_safe: true } } } as AnyEvent;
 }
 
 // With nothing to issue but work or cards in flight, the conductor sleeps (a background
@@ -582,17 +603,24 @@ function view(state: RunState, commands: readonly AnyEvent[]): NextOut {
   const steps = open.filter((st) => st.state === 'issued').map((st) => stepView(st, state));
   const in_flight = open.filter((st) => st.state !== 'issued').map((st) => st.id);
   if (steps.length || !in_flight.length) return { steps, in_flight };
+  const d = waitDeadlines(state, commands, Date.now());
+  const cardsOnly = open.every((st) => st.kind === 'ask_human' || askOpenFor(state, st.id));
+  if (cardsOnly && !d.ahead.length) return { steps, in_flight };
+  return { steps, in_flight, wait: { retry_after_ms: d.retry_after_ms } };
+}
+
+// The deadlines a `next --wait` sleeps until (view's rule, shared with issueDue's clear_safe, 8-2):
+// the overdue_at of each claim waiting on nothing but its hook facts, each live slice's time box end
+// in BUILD, and the cut point. `ahead`: the ms to each still ahead; `retry_after_ms`: the sleep.
+function waitDeadlines(state: RunState, commands: readonly AnyEvent[], now: number): { ahead: number[]; retry_after_ms: number } {
   const reportedAt = new Map<string, string>();
   for (const e of commands) if (e.kind === 'step_reported') reportedAt.set(e.data.step_id, e.ts);
-  const overdue = open.map((st) => claimOverlay(state, st, reportedAt.get(st.id)))
+  const overdue = openSteps(state).map((st) => claimOverlay(state, st, reportedAt.get(st.id)))
     .filter((ov) => ov.state === 'claimed' && ov.waiting_on === null).map((ov) => ov.overdue_at).filter((x): x is string => x !== null);
-  const now = Date.now();
   const timeboxes = state.phase === 'BUILD'
     ? liveSlices(state).filter((sl) => sl.state !== 'ESCALATED').map((sl) => sliceTimebox(state, commands, sl.id, now)?.ends_at).filter((x): x is string => typeof x === 'string')
     : [];
-  const cardsOnly = open.every((st) => st.kind === 'ask_human' || askOpenFor(state, st.id));
-  if (cardsOnly && !deadlinesAhead(state, now, overdue, timeboxes).length) return { steps, in_flight };
-  return { steps, in_flight, wait: { retry_after_ms: nextDeadlineMs(state, now, overdue, timeboxes) } };
+  return { ahead: deadlinesAhead(state, now, overdue, timeboxes), retry_after_ms: nextDeadlineMs(state, now, overdue, timeboxes) };
 }
 
 // The WRAP recording, named after the run, once run_completed is in (AD-18). Never fatal.

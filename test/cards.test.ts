@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import * as cards from '../src/core/cards.ts';
-import { cardLines, cutCard, designChoiceCard, gate1Card, gate2Card, intakeCard, intakeConfirmCard, mergeCard, newDependencyCard, nonConvergenceCard, overTimeboxCard, roundWhy, stepNonConvergenceCard } from '../src/core/cards.ts';
+import { cardLines, CLEAR_SAFE_LINE, clearSafeNow, cutCard, designChoiceCard, gate1Card, gate2Card, intakeCard, intakeConfirmCard, mergeCard, newDependencyCard, nonConvergenceCard, overTimeboxCard, roundWhy, stepNonConvergenceCard } from '../src/core/cards.ts';
 import type { Card } from '../src/core/events.ts';
 import { ESCALATION_LABELS } from '../src/core/output.ts';
 
@@ -145,6 +145,26 @@ test('cardLines (6-2): the AD-34 order, as the conductor prints it; an old card 
   assert.deepEqual(cardLines(intakeCard()).slice(-1), ["Answer in chat; you'll then get a card to confirm the intake."]);
   assert.equal(cardLines(intakeCard()).includes('To continue, type one of:'), false);
   assert.deepEqual(cardLines({ type: 'x', title: 't', commands: [] }), ['t']);
+});
+
+test('cardLines (8-2): a card stored with clear_safe ends with the clear line after the reply, in both shapes; without it the lines are as before', () => {
+  assert.equal(CLEAR_SAFE_LINE, 'Safe to `/clear` here: the run is saved. After clearing, type one of the commands above.');
+  const g = gate1Card({ spec_path: '/s.md', assumptions: 1, lint: { ok: true, errors: [] } });
+  const lines = cardLines(g);
+  assert.deepEqual(cardLines({ ...g, clear_safe: true }), [...lines, CLEAR_SAFE_LINE]);
+  assert.equal(lines.at(-1), 'Ask questions in chat; to change the spec, use rework.');
+  const old: Card = { type: 'gate_1', title: 'Gate 1 — approve the spec', reason: '/s.md', commands: ['/factory approve gate1'] };
+  assert.deepEqual(cardLines({ ...old, clear_safe: true }), ['Gate 1 — approve the spec', '/s.md', '/factory approve gate1', CLEAR_SAFE_LINE]);
+  assert.deepEqual(cardLines({ ...old, clear_safe: false }), cardLines(old));
+  // clearSafeNow: the stored flag shows only while the run is parked now; the same object otherwise.
+  const flagged: Card = { ...g, clear_safe: true };
+  assert.equal(clearSafeNow(flagged, true), flagged);
+  assert.equal(clearSafeNow(g, false), g);
+  assert.equal(clearSafeNow(g, true), g);
+  const hidden = clearSafeNow(flagged, false);
+  assert.equal('clear_safe' in hidden, false);
+  assert.deepEqual(hidden, g);
+  assert.deepEqual(cardLines(hidden), lines);
 });
 
 test('cut card: every candidate in the title and in `cut`, plus keep', () => {

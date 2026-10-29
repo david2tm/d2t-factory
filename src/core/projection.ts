@@ -2,11 +2,12 @@
 // I/O and no clock. Deadlines are absolute; only the browser compares them with `now`. The live-only
 // SIGNAL LOST overlay (`live`) is added by the server at serve time and never cached.
 import { budgetOf, openCutAsk, timeboxView } from './budget.ts';
-import { readonlyDetail } from './cards.ts';
+import { clearSafeNow, readonlyDetail } from './cards.ts';
 import { HEARTBEAT_INTERVAL_MS, SIGNAL_LOST_MISSED } from './config.ts';
 import type { AnyEvent, ArtifactEmbed, Card, Check, Stage } from './events.ts';
 import { isDecisionKind, TOOL_FACT_KINDS } from './events.ts';
 import { boardStage, fold, isTerminal, openSteps, type RunState, type SliceState, type Step } from './reducer.ts';
+import { carries } from './schedule.ts';
 import { claimOverlay, isIntakeChat, isParked, isVerified, isVoided, latestByRole, type WaitingOn } from './verify.ts';
 
 export type Column = 'backlog' | 'in_progress' | 'in_review' | 'needs_you' | 'done';
@@ -279,13 +280,16 @@ export function projectRun(loaded: RunInput, opts: { repo_hash: string; run_id: 
   for (const a of Object.values(s.asks)) {
     if (!a.open) continue;
     const st = a.step_id ? s.steps[a.step_id] : undefined;
-    needs.push({ ask_id: a.id, raised_at: t.raised.get(a.id) ?? null, ...(a.slice ? { slice: a.slice } : { stage: st?.stage ?? current }), card: a.card });
+    // 8-2: the ask's card plus the clear_safe stored on the open ask_human step that carries it.
+    const carrier = openSteps(s).find((o) => carries(o, a));
+    const card = carrier?.card?.clear_safe ? { ...a.card, clear_safe: true } : a.card;
+    needs.push({ ask_id: a.id, raised_at: t.raised.get(a.id) ?? null, ...(a.slice ? { slice: a.slice } : { stage: st?.stage ?? current }), card: clearSafeNow(card, parked) });
   }
   for (const st of openSteps(s)) {
     // The cut card's ask_human step repeats its ask, like an escalation's.
     if (st.kind !== 'ask_human' || !st.card || st.card.escalation || st.card.type === 'intake' || st.card.type === 'cut') continue;
     const files = gateFiles(s, st.card, artifacts);
-    needs.push({ ask_id: st.id, raised_at: t.issued.get(st.id) ?? null, stage: st.stage, card: st.card, ...(files.length ? { files } : {}) });
+    needs.push({ ask_id: st.id, raised_at: t.issued.get(st.id) ?? null, stage: st.stage, card: clearSafeNow(st.card, parked), ...(files.length ? { files } : {}) });
   }
   needs.sort((a, b) => (a.raised_at ?? '').localeCompare(b.raised_at ?? '') || a.ask_id.localeCompare(b.ask_id));
   const askedStages = new Set(needs.filter((n) => !n.slice && n.stage).map((n) => (n.stage === 'DESIGN' ? 'SPEC' : n.stage!)));

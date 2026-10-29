@@ -240,7 +240,12 @@ test('intake done: bad front matter is MISSING_EVIDENCE with nothing appended an
     'Task: add a footer', 'In scope: the footer', 'Out of scope: —',
     'To continue, type one of:', '  /factory approve intake — RECON maps the repo, then SCAFFOLD; the next stop is Gate 1',
     "Reply in chat to change any of this; you'll get this card again.",
+    // 8-2: the run is parked at the confirm card (stored clear_safe), so the clear line closes it.
+    'Safe to `/clear` here: the run is saved. After clearing, type one of the commands above.',
   ].join('\n'));
+  assert.equal(n.steps[0].card.clear_safe, true);
+  const issued = commands(w, id).filter((e) => e.kind === 'step_issued' && e.data.kind === 'ask_human');
+  assert.deepEqual(issued.map((e) => [e.data.card.type, e.data.card.commands.length, e.data.card.clear_safe ?? false]), [['intake', 0, false], ['intake', 1, true]], 'the intake conversation card never carries it');
   assert.deepEqual(n.in_flight, [st.step_id]);
   assert.deepEqual(ok(run(w, ['next', '--session', 'sa'])).steps.map((x: any) => x.step_id), [n.steps[0].step_id], 'one confirm card');
   say(w, 'sa', 'approve intake');

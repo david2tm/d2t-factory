@@ -7,9 +7,9 @@ import type { AnyEvent } from '../src/core/events.ts';
 import { projectRun, type Lane as CoreLane } from '../src/core/projection.ts';
 import { fold } from '../src/core/reducer.ts';
 import { readLines } from '../src/store/jsonl.ts';
-import { gate1Card, signalLostCard } from '../src/core/cards.ts';
+import { CLEAR_SAFE_LINE as CORE_CLEAR_SAFE_LINE, gate1Card, signalLostCard } from '../src/core/cards.ts';
 import {
-  actionRows, activeCardId, agentsAt, ago, displayName, isDroid, roleColor, roleDot, roleLabel, ROSTER, STAGE_AGENT, artifactFor, budgetClock, cells, chipGloss, gateFiles, pinnedLine, proofRow, sealArtifact, shortSha, withBodies, elapsedClock, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
+  actionRows, activeCardId, CLEAR_SAFE_LINE, agentsAt, ago, displayName, isDroid, roleColor, roleDot, roleLabel, ROSTER, STAGE_AGENT, artifactFor, budgetClock, cells, chipGloss, gateFiles, pinnedLine, proofRow, sealArtifact, shortSha, withBodies, elapsedClock, clockTime, pausedNotice, chipState, counts, doneDeck, emptyCellCopy, needsCell, pendingReviewers, reviewersAtWork, sealLine, sealsOf, shortLabel, stageTrack, stageWord, timeboxMeter, truthCounts, typeTag, upsertLane, verdictText,
 } from '../src/dashboard/web/src/lib/model.ts';
 import { spriteFor } from '../src/dashboard/web/src/lib/sprites.ts';
 import { REVIEWERS } from '../src/core/roster.ts';
@@ -276,6 +276,17 @@ test('actionRows (6-2): a card\'s options with their then lines and its reply; a
   assert.deepEqual(sl.rows.map((r) => r.command), ['/factory resume r-1']);
   assert.ok(sl.rows[0].then);
   assert.equal('reply' in sl, false);
+});
+
+test('actionRows (8-2): a card with clear_safe closes with the clear line (the mirror equals core\'s), in both shapes; none without it', () => {
+  assert.equal(CLEAR_SAFE_LINE, CORE_CLEAR_SAFE_LINE);
+  const g = gate1Card({ spec_path: '/s.md', assumptions: 0, lint: { ok: true, errors: [] } });
+  const flagged = actionRows({ ...g, clear_safe: true });
+  assert.deepEqual(flagged, { ...actionRows(g), clear: CLEAR_SAFE_LINE });
+  assert.equal(flagged.reply, 'Ask questions in chat; to change the spec, use rework.');
+  assert.equal('clear' in actionRows(g), false);
+  assert.deepEqual(actionRows({ commands: ['/factory approve gate1'], clear_safe: true }), { rows: [{ command: '/factory approve gate1', then: '' }], clear: CLEAR_SAFE_LINE });
+  assert.equal('clear' in actionRows({ commands: ['/factory approve gate1'] }), false);
 });
 
 test('claim waiting (6-3): CLAIMED with a gloss while it waits on Master d2t or on checks, never UNVERIFIED; the drawer proof row says on what', () => {

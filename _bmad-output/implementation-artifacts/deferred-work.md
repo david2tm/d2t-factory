@@ -28,3 +28,9 @@
 - source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/8-1-worktree-checks-out-what-the-sandbox-allows.md`
   summary: The start preflight doesn't probe the `.git` writes that `git worktree add` makes (`.git/worktrees/<name>/`, `refs/heads/factory/…`).
   evidence: Unverified (maybe-false, medium if true). During 8-1, `git init` of a nested repo under the session cwd was refused on `.git/config`. To settle it, run `worktree add` from a sandboxed session on a real repo (dry run 4).
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/8-2-cards-say-when-clear-is-safe.md`
+  summary: Test end to end that a card stored without `clear_safe` gains no line in `next`/`status` after the run later parks (8-2 matrix row 2).
+  evidence: The 8-2 review (verification gap) found only the board half pinned (`test/projection.test.ts`). Making `stepView` add the flag whenever the run is parked would pass every pipeline and driver test.
+- source_spec: `_bmad-output/specs/spec-poc-factory-plugin/stories/8-2-cards-say-when-clear-is-safe.md`
+  summary: Second review pass on the 8-2 amendment (deadline and sole-card rules, `waitDeadlines`, ActionSlot inline code) was skipped by the human.
+  evidence: Pass 1 reviewed the first implementation; the amendment and patches were verified by tests only (203/203).

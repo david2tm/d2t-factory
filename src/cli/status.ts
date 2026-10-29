@@ -27,6 +27,6 @@ export async function status(args: Args): Promise<unknown> {
   return {
     run_id: r.run_id, task: state.task, phase: state.phase, stage: boardStage(state), holder: state.holder,
     is_holder: state.holder === session, last_ts: state.last_ts,
-    open_steps: openSteps(state).map((st) => ({ ...stepView(st), state: st.state })),
+    open_steps: openSteps(state).map((st) => ({ ...stepView(st, state), state: st.state })),
   };
 }

@@ -20,6 +20,7 @@ export interface Card {
   escalation?: string;
   sha?: string;
   target?: string | null;
+  clear_safe?: boolean; // 8-2: the server already dropped it unless the run is parked now
 }
 
 export interface EvidenceRow { id: string; kind: string; ts: string | null; path?: string; check?: string; exit_code?: number }

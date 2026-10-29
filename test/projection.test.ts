@@ -137,6 +137,46 @@ test('Needs You: an open gate parks the run in the stage card\'s needs_you colum
   assert.equal(card(esc, 'slice:S1').column, 'needs_you');
 });
 
+test('Needs You (8-2): a stored clear_safe shows only while the run is parked now; an ask takes it from the ask_human step that carries it; a card without it never gains it', () => {
+  const all = load('happy-path');
+  const card1 = { type: 'gate_1', title: 'Gate 1 — approve the spec', reason: 'spec.md', commands: ['/factory approve gate1'] };
+  const pre = upTo(all, (e) => e.kind === 'gate_1_passed');
+  const gate = ev('step_issued', { kind: 'ask_human', stage: 'SPEC', attempt: 1, card: { ...card1, clear_safe: true } }, { ts: '2026-10-24T09:30:00.000Z' });
+  const parked = lane([...pre, gate]);
+  assert.equal(parked.parked, true);
+  assert.deepEqual(parked.needs_you.map((x) => x.card), [{ ...card1, clear_safe: true }]);
+  // Work restarts under the open card (a spawn beside it): the stored flag is stale and hidden.
+  const sw = ev('step_issued', { kind: 'spawn', stage: 'DESIGN', attempt: 1, role: 'designer', agent: 'd2t-factory:designer' });
+  const busy = lane([...pre, gate, sw]);
+  assert.equal(busy.parked, false);
+  assert.deepEqual(busy.needs_you.map((x) => x.card), [card1]);
+  // A card stored without the flag (an old recording, or issued while work ran) has no line even parked.
+  const plain = ev('step_issued', { kind: 'ask_human', stage: 'SPEC', attempt: 1, card: card1 });
+  assert.deepEqual(lane([...pre, plain]).needs_you.map((x) => x.card), [card1]);
+
+  // An ask (the cut card): the ask's own card plus the flag of the ask_human step carrying it.
+  const clock = '2026-10-24T08:00:00.000Z';
+  const intake = { limit_min: 120, slice_timebox_min: 30, ui_free: false, reviewer_overrides: { add: [], remove: [] } };
+  const sc = ev('step_issued', { kind: 'spawn', stage: 'SCAFFOLD', attempt: 1, role: 'scaffolder' });
+  const events: AnyEvent[] = [
+    ev('run_started', { task: 't', repo_hash: 'h', base_sha: 'b', branch: 'f' }),
+    human('intake_confirmed', { intake, clock_start: clock }),
+    ev('stage_completed', { stage: 'RECON' }),
+    sc, ev('step_claimed', { step_id: sc.id }, { session: SESSION }), ev('step_verified', { step_id: sc.id, evidence: [] }),
+    human('gate_1_passed'), human('gate_2_passed', { slices: [{ id: 'S1', title: 'one' }, { id: 'S2', title: 'two' }] }),
+    ev('slice_started', { slice: 'S1' }),
+  ];
+  const cutCard = { type: 'cut', title: 'Cut point reached — 1 slice unbuilt. Cut S2?', commands: ['/factory cut S2', '/factory keep'] };
+  const raised = ev('ask_raised', { card: cutCard }, { ts: '2026-10-24T09:20:01.000Z' });
+  const step = ev('step_issued', { kind: 'ask_human', stage: 'BUILD', attempt: 1, card: { ...cutCard, clear_safe: true } });
+  const asked = lane([...events, raised, step]);
+  assert.equal(asked.parked, true);
+  assert.deepEqual(asked.needs_you, [{ ask_id: raised.id, raised_at: raised.ts, card: { ...cutCard, clear_safe: true } }]);
+  const b = ev('step_issued', { kind: 'spawn', stage: 'BUILD', attempt: 1, role: 'builder', agent: 'd2t-factory:builder', slice: 'S1' });
+  assert.deepEqual(lane([...events, raised, step, b]).needs_you.map((x) => x.card), [cutCard]);
+  assert.deepEqual(lane([...events, raised, ev('step_issued', { kind: 'ask_human', stage: 'BUILD', attempt: 1, card: cutCard })]).needs_you.map((x) => x.card), [cutCard]);
+});
+
 test('the design question: its ask_human card (stage DESIGN) lands in Needs You, beside an in-flight SPEC; the DESIGN card waits there with the designer\'s claim', () => {
   const all = load('happy-path');
   const pre = upTo(all, (e) => e.kind === 'step_issued' && (e.data as { role?: string }).role === 'spec-writer');

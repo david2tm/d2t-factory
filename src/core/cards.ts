@@ -19,19 +19,34 @@ const ESCALATION_REPLY = 'Ask in chat; to decide, type one of the commands.';
 const gateReply = (what: string): string => `Ask questions in chat; to change ${what}, use rework.`;
 const ABANDON = opt('/factory abandon', 'the run ends; nothing is merged');
 
+// 8-2 (AD-34): the line a card stored with `clear_safe` ends with (chat and board, one source).
+export const CLEAR_SAFE_LINE = 'Safe to `/clear` here: the run is saved. After clearing, type one of the commands above.';
+
 // A card in the AD-34 order, one string per line: the title, the reason, the details, `To continue,
 // type one of:`, one `command — then` per option, the reply. The conductor prints these lines
 // verbatim (next's card_text) and the Needs You card renders the same order. A card recorded before
 // 6-2 has only `commands`: it keeps the old chat shape (title, reason, then each command on its own
-// line, with no header and no reply).
+// line, with no header and no reply). 8-2: a card stored with `clear_safe` ends with the clear line,
+// after the reply, in either shape.
 export function cardLines(card: Card): string[] {
   const head = [card.title, ...(card.reason ? [card.reason] : []), ...(card.details ?? [])];
-  if (!card.options) return [...head, ...(card.commands ?? [])];
+  const clear = card.clear_safe ? [CLEAR_SAFE_LINE] : [];
+  if (!card.options) return [...head, ...(card.commands ?? []), ...clear];
   return [
     ...head,
     ...(card.options.length ? ['To continue, type one of:', ...card.options.map((o) => `  ${o.command} — ${o.then}`)] : []),
     ...(card.reply ? [card.reply] : []),
+    ...clear,
   ];
+}
+
+// The card as a view shows it now: a stored `clear_safe` goes stale once the run unparks (a ruling on
+// another card restarted work), so it is dropped unless the run is parked now. The same object when
+// there is nothing to drop.
+export function clearSafeNow(card: Card, parked: boolean): Card {
+  if (!card.clear_safe || parked) return card;
+  const { clear_safe: _, ...rest } = card;
+  return rest;
 }
 
 // The INTAKE conversation (3-1): the conductor agrees the task, its scope and the settings with
