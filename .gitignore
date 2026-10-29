@@ -11,3 +11,6 @@ spikes/.work/
 
 # sandbox conformance test fixture (8-1)
 test/.sandbox-tmp/
+
+# probe worktrees from spikes and sandbox checks
+.claude/worktrees/
